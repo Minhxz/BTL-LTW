@@ -1,0 +1,24 @@
+<header class="site-header">
+    <a class="brand" href="/" aria-label="Cửa Hàng Sửa Xe — Trang chủ">
+        <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M6 31 18 8h5l12 23h-7l-7.5-15L13 31Z" fill="currentColor"/><path d="M14 26h15l-3-6h-9Z" fill="#095df5"/></svg>
+        <span>SỬA<span class="brand-blue">XE</span><small>CHĂM XE. VỮNG HÀNH TRÌNH.</small></span>
+    </a>
+    <nav class="desktop-nav" id="main-nav" aria-label="Điều hướng chính">
+        <a href="/#dich-vu">Dịch vụ</a>
+        <a href="/#quy-trinh">Quy trình</a>
+        <a href="/Home/Tracking">Tra cứu lịch hẹn</a>
+    </nav>
+    <div class="header-actions">
+        @if (User.Identity?.IsAuthenticated == true)
+        {
+            <a class="account-link" href="/Management/Workflow">Quản lý</a>
+        }
+
+        else
+        {
+            <a class="account-link" href="/Account/Login"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg><span>Đăng nhập</span></a>
+        }
+        <a class="button button-blue header-booking" href="/Home/Booking">ĐẶT LỊCH DỊCH VỤ <span>↗</span></a>
+        <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="main-nav" aria-label="Mở menu"><span></span><span></span></button>
+    </div>
+</header>

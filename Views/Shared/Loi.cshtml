@@ -1,0 +1,12 @@
+@model ThongTinLoi
+@{ ViewData["Title"] = "Không thể xử lý yêu cầu"; }
+<section class="information-page section-shell section-space">
+    <span class="eyebrow">CỬA HÀNG SỬA XE</span>
+    <h1>Đã có lỗi xảy ra.</h1>
+    <p>Ứng dụng chưa thể xử lý yêu cầu này. Vui lòng thử lại hoặc quay về trang chủ.</p>
+    @if (Model.HienMaYeuCau)
+    {
+        <p>Mã yêu cầu: <code>@Model.MaYeuCau</code></p>
+    }
+    <a class="button button-blue" href="/">VỀ TRANG CHỦ <span>→</span></a>
+</section>
