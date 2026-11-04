@@ -1,65 +1,52 @@
-﻿# AutoFix — Quản lý cửa hàng sửa xe cơ bản
+# Quản lý cửa hàng sửa xe — ASP.NET Core MVC
 
-ASP.NET Core MVC .NET 10, EF Core và SQL Server. Phạm vi phù hợp bài tập sinh viên: **dịch vụ, lịch hẹn khách hàng, xử lý sửa chữa, kho phụ tùng, doanh thu**. Đăng nhập/phân quyền Manager/Customer, cookie và CSRF là phần nền dùng chung.
+Trong Visual Studio chọn **File → Open → Project/Solution** và mở **QuanLyCuaHangSuaXe.sln**. Thanh chạy phải hiện **http**, Solution Explorer phải có project **QuanLyCuaHangSuaXe.Web**, rồi bấm **F5**. Nếu thanh chạy hiện **Current Document (Program.cs)** thì bạn đang mở thư mục/file riêng, chưa nạp solution.
 
-## Chạy ứng dụng
-
-Cần .NET 10 SDK và SQL Server LocalDB (`MSSQLLocalDB`), hoặc SQL Server có quyền tạo/nâng cấp bảng.
+Hoặc mở **ChayWeb.cmd**, hay chạy:
 
 ```powershell
-dotnet restore .\Vehicle-Repair-Management.csproj
-dotnet build .\Vehicle-Repair-Management.csproj
-dotnet run --project .\Vehicle-Repair-Management.csproj --launch-profile http
+dotnet run --project QuanLyCuaHangSuaXe.Web.csproj --launch-profile http
 ```
 
-Địa chỉ: **http://localhost:5240**. Chuỗi kết nối trong `appsettings.json` dùng CSDL `AutoFixCompact`; có thể đổi bằng `ConnectionStrings__AutoFix`.
+Website: http://localhost:5240 — Sơ đồ luồng: http://localhost:5240/Home/Flow — Quản lý: http://localhost:5240/Account/Login.
 
-| Tài khoản Development | Mật khẩu | Quyền |
-| --- | --- | --- |
-| admin | 123 | Manager — quản lý cửa hàng |
-| khach | 123 | Customer — đặt/tra cứu lịch, không vào được quản trị |
+CSDL mặc định là **QuanLySuaXe** trên `(localdb)\MSSQLLocalDB`. Dùng trực tiếp 20 bảng của bài BTL-LTTQ; không sử dụng AutoFixCompact. Có thể đổi máy SQL bằng `ConnectionStrings__QuanLySuaXe`. Trên máy nhóm, dùng tài khoản có sẵn trong bảng NhanVien. Bản dữ liệu mẫu có `namtv` (quản lý), `phongtc` (thợ chính), `hamn` (thu ngân), mật khẩu mẫu `123456`; nếu nhóm đã đổi mật khẩu thì dùng mật khẩu hiện tại.
 
-Khách chưa đăng nhập vẫn có thể đặt lịch và tra cứu bằng mã + SĐT. Mật khẩu lưu dạng băm; không có màn hình đăng ký/quản lý tài khoản riêng. Production dùng `AutoFix__AdminUsername` và `AutoFix__AdminPassword` để tạo tài khoản đầu tiên; biến môi trường không ghi đè mật khẩu đã lưu.
+## Chức năng
 
-## Phạm vi đơn giản
+- Website khách: xem dịch vụ, đặt lịch, lưu/khôi phục/xóa nháp session, tra cứu mã + SĐT, hủy lịch chưa tiếp nhận.
+- Tiếp nhận: khách hàng/xe, nhiều dịch vụ, kiểm tra định mức và trừ kho trong transaction, phân công thợ, cập nhật tiến độ, ngày hẹn trả.
+- Dịch vụ: CRUD, định mức phụ tùng, ảnh JPG/PNG/WebP, editor mô tả có lọc HTML.
+- Kho: nhà cung cấp, phụ tùng/lô hàng, phiếu nhập nhiều dòng, điều chỉnh tồn và lịch sử đổi giá.
+- Nhân sự: tài khoản, chức vụ, khoản điều chỉnh, ca làm, chấm công, công cá nhân, đổi mật khẩu.
+- Hóa đơn: chỉ lập cho phiếu hoàn thành, tính từ giá chốt, chống thu trùng, xem/in, thống kê ngày và xuất CSV.
 
-| Trang | Công việc |
-| --- | --- |
-| `/` | Dịch vụ, giá tham khảo, quy trình |
-| `/Home/Booking` | Đặt lịch, nhận mã, lưu/khôi phục/xóa nháp session |
-| `/Home/Tracking` | Tra cứu trạng thái/ghi chú, hủy lịch chưa bắt đầu sửa |
-| `/Management/Services` | CRUD dịch vụ, upload ảnh, editor mô tả |
-| `/Management/Workflow` | Tìm/lọc/phân trang lịch hẹn, tiếp nhận và cập nhật tiến độ |
-| `/Management/Inventory` | CRUD phụ tùng, mã/tên/đơn vị/tồn/đơn giá; tìm kiếm, phân trang |
-| `/Management/Analytics` | Sổ tiền đã thu; lọc khoảng ngày; tổng hôm nay, tháng này, kỳ đang lọc |
+## Cấu trúc mã nguồn
 
-**Kho:** người quản lý nhập số lượng tồn hiện tại khi thêm/sửa. Không có nhà cung cấp, phiếu nhập/xuất hoặc tự trừ kho theo lịch sửa.
+- `Classes/XuLyDuLieu.cs`: truy vấn SQL có tham số và transaction.
+- `Classes/LamSachHtml.cs`: lọc nội dung editor.
+- `Classes/NghiepVuSuaXe.cs`: nghiệp vụ tiếp nhận, phân công và chuyển trạng thái.
+- `Classes/PhanQuyenNguoiDung.cs`: xác định vai trò và mã nhân viên.
+- `Controllers/`: mỗi lớp điều khiển có file riêng, đặt tên tiếng Việt theo chức năng.
+- `Models/`: các lớp dữ liệu nhập, validation và lỗi; tách riêng khỏi controller.
+- `Controllers/DichVuController.cs`, `HoaDonController.cs`, `ChamCongController.cs`: các phần dịch vụ, hóa đơn, công cá nhân được tách riêng để phân việc.
+- `Classes/DinhNghiaDanhMuc.cs`, `PhanTrang.cs`: cấu hình danh mục và kiểm tra bộ lọc dùng chung.
+- `Views/TrangChu`, `Views/QuanLy`, `Views/TaiKhoan`: giao diện Razor. `Views/Shared` giữ quy ước ASP.NET MVC.
+- `wwwroot/js/quan-ly.js`: quản lý bằng AJAX; các mã JSON/URL giữ ổn định để tránh đứt liên kết.
+- `database/BoSungChoWeb.sql`: 4 bảng mở rộng cho lịch online, ảnh/editor và bản chốt phụ tùng. Chỉ bổ sung, không xóa 20 bảng gốc.
 
-**Doanh thu:** chỉ ghi nhận khi lịch đã Completed, một khoản thu cho mỗi lịch. Người quản lý nhập tổng tiền thực thu và ngày thu; có thể sửa số tiền/ngày/ghi chú. Không có hóa đơn nhiều dòng, thu nhiều đợt, chi phí/lợi nhuận hay cổng thanh toán. Doanh thu không tự lấy giá tham khảo của dịch vụ. Mặc định hiển thị tháng hiện tại đến hôm nay; thẻ hôm nay/tháng này độc lập bộ lọc.
+Không chạy lại script cài mới trên dữ liệu nhóm. `database/QuanLySuaXe.sql` chỉ dành cho CSDL chưa tồn tại; gặp CSDL đã có sẽ bật NOEXEC để bỏ qua phần còn lại. Cần mở cửa sổ truy vấn mới sau đó. Website tự bổ sung các bảng Web khi khởi động.
 
-## CSDL và dữ liệu cũ
+## Phân công và kiểm tra
 
-Có **5 bảng**: `Users`, `Services`, `Appointments`, `InventoryItems`, `RevenueEntries`. `RevenueEntries.Reference` là khóa chính và khóa ngoại tới lịch hẹn, giúp ngăn tính trùng khoản thu.
+Đọc [Phân công 5 người](docs/PHAN_CONG_5_NGUOI.md): ghi rõ từng file, hàm, công việc, bảng SQL, tình huống kiểm tra và thứ tự ghép.
 
-Lần đầu chạy, ứng dụng tạo CSDL và danh mục dịch vụ mẫu. Với bản cũ có 3 bảng, khởi động sẽ thêm hai bảng kho/doanh thu còn thiếu trong transaction; không xóa hoặc tạo lại các bảng cũ. SQL tương ứng nằm trong [database/AutoFixCompact.sql](database/AutoFixCompact.sql), chạy bằng SSMS hoặc công cụ SQL Server phù hợp.
+Bài dùng MVC/Razor; phân trang, bộ lọc và AJAX; CRUD danh mục; cookie đăng nhập và session nháp; validation/annotation; API GET/POST/PUT/DELETE; upload ảnh; editor mô tả. Các ca kiểm tra thủ công nằm ngay dưới phần việc của từng người. Đã bỏ thư mục tests và scripts theo yêu cầu nhóm.
 
-`App_Data/appointments.json` được nhập một lần; file gốc được giữ lại. Tắt nhập bằng `AutoFix__ImportLegacyJson=false` khi test. JSON kho/phiếu tính tiền từ bản ERP cũ được giữ nguyên và không tự chuyển sang cấu trúc mới. Kho và doanh thu không khởi tạo dữ liệu giả.
+Kiểm tra bản sau khi sắp xếp mã: build 0 lỗi/0 cảnh báo; JavaScript qua kiểm tra cú pháp; 24 yêu cầu HTTP đạt trên CSDL riêng, gồm các controller mới, nhập kho, tiếp nhận/trừ kho, hủy/hoàn kho, editor và chặn lập hóa đơn sai trạng thái. Chưa kiểm tra trực quan toàn bộ màn hình. Các lần ghép sau cần kiểm tra lại theo phân công; không dùng số liệu thật để demo thay đổi dữ liệu.
 
-Ảnh upload JPG/PNG/WebP tối đa 2 MB lưu tại `wwwroot/uploads/services/`. Session bản nháp hết hạn sau 30 phút không hoạt động và mất khi ứng dụng khởi động lại. Culture hỗ trợ vi-VN/en-US; giao diện hiện bằng tiếng Việt.
+## Quy ước nghiệp vụ
 
-## Phân công và kiểm thử
+Giá dịch vụ là giá trọn gói, giống bài BTL-LTTQ. Trừ phụ tùng khi tiếp nhận, không trừ khi đặt lịch online. Hủy phiếu Chờ sửa do web tạo sẽ hoàn theo bản chốt phụ tùng; phiếu tạo từ ứng dụng khác cần hủy trong ứng dụng gốc. Thợ chính nhận tối đa 3 xe, thợ phụ 2 xe. Thu–nhập kho là chênh lệch dòng tiền, không phải lợi nhuận. Mật khẩu SHA-256 giữ tương thích ứng dụng BTL-LTTQ; muốn đổi thuật toán cần cập nhật đồng thời cả hai ứng dụng.
 
-- [Phân công 5 người](docs/PHAN_CONG_5_NGUOI.md): mỗi người một chức năng, file/API và tiêu chí nghiệm thu.
-- [Đối chiếu yêu cầu đề](docs/DOI_CHIEU_YEU_CAU.md): nơi thể hiện từng kỹ thuật.
-- [Smoke API](tests/smoke.ps1) và [kiểm tra upload](tests/upload.ps1): chỉ chạy trên ứng dụng nối CSDL test riêng, tắt import JSON.
-
-Khi ứng dụng test đã chạy ở cổng 5251:
-
-```powershell
-.\tests\smoke.ps1 -BaseUrl http://localhost:5251
-.\tests\upload.ps1 -BaseUrl http://localhost:5251
-```
-
-Đã kiểm tra bản có kho/doanh thu: build 0 lỗi, 0 cảnh báo; 120 kiểm tra API và 4 kiểm tra upload đạt. SQL script và nâng cấp từ 3 lên 5 bảng đã chạy thử lặp lại, giữ nguyên dữ liệu cũ. Các tài liệu hướng dẫn không thay thế báo cáo môn học 15–35 trang.
-
-Trên máy hiện tại, metadata điều khiển `MSSQLLocalDB` có lúc báo Stopped dù SQL vẫn chạy. Phiên kiểm tra sử dụng kết nối trực tiếp tới pipe đang hoạt động qua biến môi trường riêng của process; cấu hình kết nối chuẩn trong project vẫn giữ dạng LocalDB. Nếu gặp lỗi khởi động instance, kiểm tra SQL Server/LocalDB của máy trước khi chạy ứng dụng.
+Mã bản 5 bảng cũ đã được lưu ngoài project tại `../BTL-LTW/BanLuuTru/MaCuTruocKhiVietHoa.zip`. Thư mục dự án hiện tại là `C:\Users\buiqu\Desktop\BTL-LTW1`; mở `QuanLyCuaHangSuaXe.sln` ngay trong thư mục này. Remote Git: `https://github.com/Minhxz/BTL-LTW.git`. Các thay đổi hiện tại chưa được commit/push.

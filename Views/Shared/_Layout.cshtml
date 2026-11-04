@@ -3,21 +3,21 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="AutoFix — sửa chữa, bảo dưỡng ô tô, xe máy, xe xăng, xe điện và hybrid. Đặt lịch và theo dõi tiến độ trực tuyến." />
+    <meta name="description" content="Cửa Hàng Sửa Xe — sửa chữa, bảo dưỡng ô tô, xe máy, xe xăng, xe điện và hybrid. Đặt lịch và theo dõi tiến độ trực tuyến." />
     <meta name="theme-color" content="#095df5" />
-    <title>@ViewData["Title"] | AutoFix</title>
+    <title>@ViewData["Title"] | Cửa Hàng Sửa Xe</title>
     <link rel="icon" type="image/svg+xml" href="~/images/autofix-mark.svg" />
-    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
-    <link rel="stylesheet" href="~/css/catalog.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/trang-chu.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/danh-muc.css" asp-append-version="true" />
     @await RenderSectionAsync("Styles", required: false)
 </head>
 <body>
     <a class="skip-link" href="#main-content">Đến nội dung chính</a>
-    <partial name="_Header" />
+    <partial name="_DauTrang" />
     <main id="main-content">@RenderBody()</main>
-    <partial name="_Footer" />
-    <script src="~/js/http.js" asp-append-version="true" defer></script>
-    <script src="~/js/site.js" asp-append-version="true" defer></script>
+    <partial name="_ChanTrang" />
+    <script src="~/js/goi-api.js" asp-append-version="true" defer></script>
+    <script src="~/js/trang-chu.js" asp-append-version="true" defer></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
