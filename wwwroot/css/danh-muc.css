@@ -335,3 +335,15 @@
     gap: 7px;
   }
 }
+
+.catalog-photo img[src*="/images/gemini-dv"],
+.catalog-detail-image[src*="/images/gemini-dv"],
+.catalog-photo img[src$="/images/bao-duong-xe-so-con-tay.png"],
+.catalog-detail-image[src$="/images/bao-duong-xe-so-con-tay.png"] {
+  object-fit: contain;
+  background: #f4f7fa;
+}
+
+.catalog-photo img[src$="/images/gemini-dv20.jpg"] {
+  transform: scale(1.45);
+}

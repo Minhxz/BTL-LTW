@@ -29,8 +29,6 @@ namespace QLyCuaHangSuaXe.Controllers
         public IActionResult DatLich() => View("DatLich");
         [ActionName("Tracking")]
         public IActionResult TraCuu() => View("TraCuu");
-        [ActionName("Flow")]
-        public IActionResult LuongNghiepVu() => View("~/Views/QuanLy/LuongNghiepVu.cshtml");
         [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
         [ActionName("Error")]
         public IActionResult Loi()

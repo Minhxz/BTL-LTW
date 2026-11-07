@@ -416,13 +416,13 @@
     const d = await api("/api/workshop/dashboard");
     document.querySelector("#db-status").textContent = "● " + d.database;
     const count = (s) => d.jobs.find((x) => x.status === s)?.count || 0;
-    return `<div class="welcome"><div><h2>Mọi hoạt động, trong một nơi.</h2><p class="muted">Theo dõi cửa hàng và tiếp tục công việc hôm nay.</p></div>${canReceive ? btn("+ Tiếp nhận xe", "create-job", "", "primary") : ""}</div><div class="stats"><article class="stat dark"><label>XE ĐANG SỬA</label><strong>${count("Đang sửa")}</strong><small>Đang được thợ xử lý</small></article><article class="stat"><label>CHỜ SỬA</label><strong>${count("Chờ sửa")}</strong><small>Đã tiếp nhận tại cửa hàng</small></article><article class="stat"><label>${canReceive ? "LỊCH CHỜ XÁC NHẬN" : "ĐÃ HOÀN THÀNH"}</label><strong>${canReceive ? d.pendingBookings : count("Hoàn thành")}</strong><small>${canReceive ? "Yêu cầu từ website" : "Xe được giao phụ trách"}</small></article><article class="stat"><label>${canReceive ? "THU HÔM NAY" : "TỔNG PHIẾU"}</label><strong style="font-size:25px">${canReceive ? money(d.todayRevenue) : d.jobs.reduce((s, x) => s + x.count, 0)}</strong><small>${canReceive ? "Từ hóa đơn đã thanh toán" : "Trong phạm vi của bạn"}</small></article></div><div class="grid-two"><section class="panel"><div class="panel-head"><h2>Luồng công việc</h2><a href="/Home/Flow">Xem đầy đủ ↗</a></div><div class="flow-preview">${canReceive ? '<a href="#bookings">01 · Lịch hẹn →</a>' : ""}<a href="#jobs">02 · Tiếp nhận →</a><a href="#jobs">03 · Sửa chữa →</a>${canReceive ? '<a href="#invoices">04 · Thanh toán</a>' : ""}</div><p class="hint">Mọi thay đổi được ghi trực tiếp vào cơ sở dữ liệu của cửa hàng. Số liệu trên màn hình lấy từ các phiếu và hóa đơn thực tế.</p></section><section class="panel"><div class="panel-head"><h2>Trạng thái phiếu sửa</h2></div>${taoBang(
+    return `<div class="welcome"><div><h2>Mọi hoạt động, trong một nơi.</h2><p class="muted">Theo dõi cửa hàng và tiếp tục công việc hôm nay.</p></div>${canReceive ? btn("+ Tiếp nhận xe", "create-job", "", "primary") : ""}</div><div class="stats"><article class="stat dark"><label>XE ĐANG SỬA</label><strong>${count("Đang sửa")}</strong><small>Đang được thợ xử lý</small></article><article class="stat"><label>CHỜ SỬA</label><strong>${count("Chờ sửa")}</strong><small>Đã tiếp nhận tại cửa hàng</small></article><article class="stat"><label>${canReceive ? "LỊCH CHỜ XÁC NHẬN" : "ĐÃ HOÀN THÀNH"}</label><strong>${canReceive ? d.pendingBookings : count("Hoàn thành")}</strong><small>${canReceive ? "Yêu cầu từ website" : "Xe được giao phụ trách"}</small></article><article class="stat"><label>${canReceive ? "THU HÔM NAY" : "TỔNG PHIẾU"}</label><strong style="font-size:25px">${canReceive ? money(d.todayRevenue) : d.jobs.reduce((s, x) => s + x.count, 0)}</strong><small>${canReceive ? "Từ hóa đơn đã thanh toán" : "Trong phạm vi của bạn"}</small></article></div><section class="panel"><div class="panel-head"><h2>Trạng thái phiếu sửa</h2></div>${taoBang(
       [
         ["status", "Tiến độ", badge],
         ["count", "Số phiếu"],
       ],
       d.jobs,
-    )}</section></div>${
+    )}</section>${
       d.stockAlerts
         ? `<section class="panel"><div class="panel-head"><h2>Phụ tùng cần chú ý</h2><a href="#parts">Đến kho →</a></div>${taoBang(
             [
@@ -466,6 +466,8 @@
       })
       .join("~");
   }
+  const modelHint = 'list="motorcycle-models" placeholder="Ví dụ: Vision"';
+  const brandHint = 'list="motorcycle-brands" placeholder="Ví dụ: Honda"';
   async function suaDanhMuc(index) {
     const spec = specs.find((x) => x.id === section),
       row = index == null ? null : current[index];
@@ -516,12 +518,13 @@
                   : type === "number"
                     ? 'step="1"'
                     : "";
+          const hint = { LoaiXe: modelHint, HangSanXuat: brandHint }[f.name] ?? "";
           return field(
             f.name,
             f.label,
             type,
             value,
-            `${fixed ? "readonly" : ""} ${!f.optional ? "required" : ""} maxlength="${f.max}" ${bounds}`,
+            `${fixed ? "readonly" : ""} ${!f.optional ? "required" : ""} maxlength="${f.max}" ${bounds} ${hint}`,
           );
         }),
     );
@@ -543,20 +546,61 @@
       },
     );
   }
+  const xemTruocPhieuMarkup = `<div class="detail-actions"><button class="button secondary" type="button" id="job-preview-button">Kiểm tra tiền và phụ tùng</button></div>
+    <div id="job-preview" aria-live="polite"></div>`;
+
+  function ganXemTruocPhieu(layDuLieu) {
+    const button = body.querySelector("#job-preview-button");
+    const output = body.querySelector("#job-preview");
+    button.addEventListener("click", async () => {
+      const input = layDuLieu();
+      if (!input.vehicleType || !input.services.length || input.services.some((line) => !line.serviceId || !Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 1000)) {
+        output.textContent = "Nhập mẫu xe, chọn dịch vụ và số lượng hợp lệ để kiểm tra.";
+        return;
+      }
+      const request = JSON.stringify(input);
+      const conHienTai = () => button.isConnected && dialog.open && request === JSON.stringify(layDuLieu());
+      button.disabled = true;
+      output.textContent = "Đang kiểm tra…";
+      try {
+        const result = await api("/api/workshop/jobs/preview", { method: "POST", body: request });
+        if (!conHienTai()) return;
+        const parts = result.parts.map((part) => ({ ...part, issue: part.issue || "Đủ" }));
+        output.innerHTML = `<div class="invoice-total">Tạm tính <b>${money(result.total)}</b></div>${parts.length ? taoBang([
+          ["id", "Mã phụ tùng"],
+          ["name", "Phụ tùng"],
+          ["quantity", "Cần dùng"],
+          ["stock", "Tồn kho"],
+          ["issue", "Kiểm tra"],
+        ], parts) : '<p class="hint">Các dịch vụ đã chọn không có định mức phụ tùng.</p>'}
+          <p class="hint">Kho và giá được kiểm tra lại khi lưu phiếu.</p>`;
+      } catch (e) {
+        if (conHienTai()) output.textContent = e.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+    return () => output.replaceChildren();
+  }
+
   async function tiepNhanXe() {
     const [serviceOptions, mechanics] = await Promise.all([
       options("services"),
       options("mechanics"),
     ]);
+    const layDuLieu = () => ({
+      vehicleType: form.elements.vehicleType.value.trim(),
+      services: [...body.querySelectorAll("#lines .line-row")].map((row) => ({
+        serviceId: row.querySelector("select").value,
+        quantity: Number(row.querySelector("input").value),
+      })),
+    });
     moHopThoai(
       "Tiếp nhận xe",
-      `<div class="form-grid">${field("customerName", "Họ tên khách hàng", "text", "", 'required maxlength="100"')}${field("phone", "Số điện thoại", "tel", "", 'required pattern="0[0-9]{8,10}" maxlength="11"')}${field("licensePlate", "Biển số xe", "text", "", 'required maxlength="20"')}${field("vehicleType", "Loại xe", "text", "Xe máy", 'required maxlength="50"')}${field("brand", "Hãng xe", "text", "", 'required maxlength="50"')}${field("color", "Màu sắc", "text", "", 'required maxlength="30"')}${field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`)}${selectField("mechanicId", "Phân công thợ (có thể bổ sung sau)", mechanics, "")}</div><h3 style="margin-top:24px">Dịch vụ thực hiện</h3><div class="line-items" id="lines"></div>${btn("+ Thêm dịch vụ", "line-add")}<p class="hint">Giá trọn gói được chốt từ danh mục. Hệ thống kiểm tra định mức, hạn dùng và tồn kho trước khi tiếp nhận.</p>`,
+      `<div class="form-grid">${field("customerName", "Họ tên khách hàng", "text", "", 'required maxlength="100"')}${field("phone", "Số điện thoại", "tel", "", 'required pattern="0[0-9]{8,10}" maxlength="11"')}${field("licensePlate", "Biển số xe", "text", "", 'required maxlength="20"')}${field("vehicleType", "Mẫu xe", "text", "", `required maxlength="50" ${modelHint}`)}${field("brand", "Hãng xe", "text", "", `required maxlength="50" ${brandHint}`)}${field("color", "Màu sắc", "text", "", 'required maxlength="30"')}${field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`)}${selectField("mechanicId", "Phân công thợ (có thể bổ sung sau)", mechanics, "")}</div><h3 style="margin-top:24px">Dịch vụ thực hiện</h3><div id="job-services"><div class="line-items" id="lines"></div>${btn("+ Thêm dịch vụ", "line-add")}</div>${xemTruocPhieuMarkup}`,
       async (d) => {
         const input = Object.fromEntries(d);
-        input.services = [...body.querySelectorAll(".line-row")].map((r) => ({
-          serviceId: r.querySelector("select").value,
-          quantity: Number(r.querySelector("input").value),
-        }));
+        Object.assign(input, layDuLieu());
         delete input.line;
         const r = await api("/api/workshop/jobs", {
           method: "POST",
@@ -568,6 +612,13 @@
     );
     body.dataset.lineOptions = serviceOptions;
     themDong();
+    const xoaXemTruoc = ganXemTruocPhieu(layDuLieu);
+    form.elements.vehicleType.addEventListener("input", xoaXemTruoc);
+    const serviceFields = body.querySelector("#job-services");
+    serviceFields.addEventListener("input", xoaXemTruoc);
+    serviceFields.addEventListener("click", (e) => {
+      if (e.target.closest('[data-action="line-add"], [data-action="line-remove"]')) xoaXemTruoc();
+    });
   }
   // Thêm một dòng (chọn dịch vụ/phụ tùng + số lượng) vào form đang mở.
   // Dùng chung cho phiếu nhập kho (Người 4) và tiếp nhận xe (Người 3).
@@ -723,10 +774,12 @@
     moHopThoai("Phiếu " + id + " · " + j.status, html);
   }
   async function nhanLich(id) {
+    const booking = current.find((row) => row.id === id);
+    if (!booking) throw new Error("Lịch hẹn không còn trong danh sách. Hãy tải lại.");
     const mechanics = await options("mechanics");
     moHopThoai(
       "Tiếp nhận lịch " + id,
-      `<p class="hint">Kiểm tra thông tin khách trước khi lập phiếu và trừ kho. Thông tin khách và dịch vụ lấy từ lịch hẹn.</p><div class="form-grid">${field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`)}${field("color", "Màu xe", "text", "", 'required maxlength="30"')}${selectField("mechanicId", "Thợ phụ trách", mechanics, "")}</div>`,
+      `<p>Xe <b>${esc(booking.brand)} ${esc(booking.vehicleType)}</b> · ${esc(booking.licensePlate)}</p><p>Dịch vụ <b>${esc(booking.service)}</b></p><div class="form-grid">${field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`)}${field("color", "Màu xe", "text", "", 'required maxlength="30"')}${selectField("mechanicId", "Thợ phụ trách", mechanics, "")}</div>${xemTruocPhieuMarkup}`,
       async (d) =>
         (
           await api(
@@ -736,6 +789,10 @@
         ).message,
       "Tiếp nhận và trừ kho",
     );
+    ganXemTruocPhieu(() => ({
+      vehicleType: booking.vehicleType,
+      services: [{ serviceId: booking.serviceId, quantity: 1 }],
+    }));
   }
   function xacNhan(title, text, callback) {
     moHopThoai(

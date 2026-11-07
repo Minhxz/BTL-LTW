@@ -36,8 +36,8 @@
     head.append(heading, element("span", item.statusLabel, "status-badge"));
     const details = element("div", undefined, "tracking-details");
     [
-      ["Loại xe", item.vehicleType],
-      ["Hãng / mẫu xe", item.brand],
+      ["Mẫu xe", item.vehicleType],
+      ["Hãng xe", item.brand],
       ["Biển số", item.licensePlate || "Chưa cập nhật"],
       ["Dịch vụ", item.service],
       ["Thời gian hẹn", api.date(item.date) + " · " + item.time],

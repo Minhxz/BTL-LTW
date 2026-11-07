@@ -10,7 +10,7 @@ Thay Người 1–5 bằng họ tên/MSSV. Đây là phân công phụ trách m�
 | 2 | Trang khách, khách hàng/xe, đặt lịch và tra cứu | /; /Home/Booking; /Home/Tracking; quản lý → Lịch hẹn |
 | 3 | Dịch vụ, ảnh/editor, tiếp nhận và sửa chữa | Quản lý → Dịch vụ, Định mức phụ tùng, Tiếp nhận & sửa chữa |
 | 4 | Nhà cung cấp, phụ tùng, nhập kho, kiểm kê | Quản lý → Kho & nhà cung cấp |
-| 5 | Hóa đơn, tổng quan, báo cáo, ghép bài | Quản lý → Hóa đơn, Báo cáo doanh thu; /Home/Flow |
+| 5 | Hóa đơn, tổng quan, báo cáo, ghép bài | Quản lý → Hóa đơn, Báo cáo doanh thu |
 
 ## Người 1 — Tài khoản, nhân sự và chấm công
 
@@ -105,7 +105,7 @@ Thay Người 1–5 bằng họ tên/MSSV. Đây là phân công phụ trách m�
 | Controllers/HoaDonController.cs | LapHoaDon, DanhSachHoaDon | Chỉ thu phiếu hoàn thành; chống hóa đơn trùng; tính tiền từ giá chốt; lọc danh sách |
 | Models/ThongTinSuaChua.cs | YeuCauThanhToan | Dữ liệu ngày thanh toán |
 | Controllers/BaoCaoController.cs | TongQuan, BaoCao, XuatCsv | Số liệu dashboard, báo cáo theo ngày, xuất CSV |
-| Controllers/QuanLyController.cs | BangDieuKhien, LuongNghiepVu | Trả giao diện quản lý và luồng nghiệp vụ |
+| Controllers/QuanLyController.cs | BangDieuKhien | Trả giao diện quản lý |
 | Views/QuanLy/BangDieuKhien.cshtml; wwwroot/css/quan-ly.css | Menu, vùng nội dung, hộp thoại, in | Khung dùng chung của trang quản lý; phối hợp 4 người còn lại |
 | wwwroot/js/quan-ly.js | hienTongQuan, hienBaoCao; taiDuLieu: invoices | Dashboard, biểu đồ/bảng doanh thu và danh sách hóa đơn |
 | wwwroot/js/quan-ly.js | xemPhieu; xuLyThaoTac: payment/print-invoice/print | Thu tiền, xem và in hóa đơn; phối hợp phần chi tiết phiếu Người 3 |

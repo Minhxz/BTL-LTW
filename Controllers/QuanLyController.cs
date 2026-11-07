@@ -19,6 +19,4 @@ public sealed class QuanLyController : Controller
     public IActionResult ThongKe() => Redirect("/Management/Workflow#reports");
     [ActionName("JobCard")]
     public IActionResult PhieuSua() => RedirectToAction("Workflow");
-    [ActionName("Flow")]
-    public IActionResult LuongNghiepVu() => View("~/Views/QuanLy/LuongNghiepVu.cshtml");
 }
