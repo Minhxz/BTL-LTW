@@ -46,6 +46,9 @@ public sealed class TiepNhanController(XuLyDuLieu db, NghiepVuSuaXe workflow) : 
         return Ok(new { job, lines, assignments, invoice });
     }
 
+    [HttpPost("jobs/preview"), Authorize(Roles = "Manager,Cashier")]
+    public async Task<IActionResult> XemTruocPhieu(YeuCauXemTruocPhieu input) => Ok(await workflow.XemTruocPhieu(input));
+
     [HttpPost("jobs"), Authorize(Roles = "Manager,Cashier")]
     public async Task<IActionResult> TaoPhieu(ThongTinTiepNhan input) => StatusCode(201, new { id = await workflow.TaoPhieuAsync(input, PhanQuyenNguoiDung.MaNhanVien(User)), message = "Đã tiếp nhận xe và cập nhật kho." });
     [HttpPut("jobs/{id}/status")]

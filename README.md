@@ -8,9 +8,11 @@ Hoặc mở **ChayWeb.cmd**, hay chạy:
 dotnet run --project QuanLyCuaHangSuaXe.Web.csproj --launch-profile http
 ```
 
-Website: http://localhost:5240 — Sơ đồ luồng: http://localhost:5240/Home/Flow — Quản lý: http://localhost:5240/Account/Login.
+Website: http://localhost:5240 — Quản lý: http://localhost:5240/Account/Login.
 
 CSDL mặc định là **QuanLySuaXe** trên `(localdb)\MSSQLLocalDB`. Dùng trực tiếp 20 bảng của bài BTL-LTTQ; không sử dụng AutoFixCompact. Có thể đổi máy SQL bằng `ConnectionStrings__QuanLySuaXe`. Trên máy nhóm, dùng tài khoản có sẵn trong bảng NhanVien. Bản dữ liệu mẫu có `namtv` (quản lý), `phongtc` (thợ chính), `hamn` (thu ngân), mật khẩu mẫu `123456`; nếu nhóm đã đổi mật khẩu thì dùng mật khẩu hiện tại.
+
+Ảnh mẫu của các dịch vụ có sẵn trong `wwwroot/images`. Web tự chọn ảnh theo mã dịch vụ khi chưa có ảnh riêng hoặc tệp ảnh đã lưu không có trên máy. Thành viên chỉ cần pull đủ các tệp ảnh trong repo. Ảnh tải từ trang quản lý nằm trong `wwwroot/uploads/services` và được ưu tiên khi có trên máy.
 
 ## Chức năng
 

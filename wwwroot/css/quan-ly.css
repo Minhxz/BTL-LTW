@@ -628,18 +628,6 @@ input[readonly] {
   text-align: right;
   font-size: 10px;
 }
-.flow-preview {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.flow-preview a {
-  padding: 14px 16px;
-  border-radius: 6px;
-  background: #f0f7f4;
-  color: #1e7256;
-  font-size: 12px;
-}
 .content-editor {
   min-height: 180px;
   padding: 15px;

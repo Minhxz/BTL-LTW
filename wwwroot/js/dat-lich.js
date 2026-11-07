@@ -37,14 +37,6 @@
   date.max = new Intl.DateTimeFormat("sv-SE", {
     timeZone: "Asia/Bangkok",
   }).format(max);
-  const vehicleMap = {
-    car: "Ô tô",
-    motorcycle: "Xe máy",
-    electric: "Xe điện & hybrid",
-    truck: "Xe bán tải / xe tải nhẹ",
-  };
-  if (vehicleMap[query.get("vehicle")])
-    form.elements.vehicleType.value = vehicleMap[query.get("vehicle")];
   function updateTimes() {
     const now = new Intl.DateTimeFormat("en-GB", {
       timeZone: "Asia/Bangkok",
@@ -151,9 +143,18 @@
         form.elements[name].value =
           typeof data.draft[name] === "string" ? data.draft[name] : "";
       });
+      // Bản nháp từ form cũ lưu nhóm phương tiện thay cho mẫu xe.
+      const legacyType = ["Ô tô", "Xe máy", "Xe điện & hybrid", "Xe bán tải / xe tải nhẹ"]
+        .includes(data.draft.vehicleType);
+      if (legacyType) {
+        form.elements.vehicleType.value = "";
+        form.elements.brand.value = "";
+      }
       updateTimes();
       draftStatus(
-        "Đã khôi phục bản nháp. Kiểm tra lại dịch vụ, ngày và giờ trước khi gửi.",
+        legacyType
+          ? "Đã khôi phục bản nháp cũ. Vui lòng nhập lại mẫu xe và hãng xe."
+          : "Đã khôi phục bản nháp. Kiểm tra lại dịch vụ, ngày và giờ trước khi gửi.",
       );
     } catch (error) {
       draftStatus(error.message, true);

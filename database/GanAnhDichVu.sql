@@ -9,7 +9,7 @@ DECLARE @AnhDichVu table (MaDichVu varchar(10) PRIMARY KEY, Anh nvarchar(250) NO
 INSERT INTO @AnhDichVu (MaDichVu, Anh) VALUES
     ('DV01', N'/images/gemini-dv01.jpg'), ('DV02', N'/images/gemini-dv02.jpg'),
     ('DV03', N'/images/gemini-dv03.jpg'), ('DV04', N'/images/gemini-dv05.jpg'),
-    ('DV05', N'/images/gemini-dv04.jpg'), ('DV06', N'/images/gemini-dv06.jpg'),
+    ('DV05', N'/images/bao-duong-xe-so-con-tay.png'), ('DV06', N'/images/gemini-dv06.jpg'),
     ('DV07', N'/images/gemini-dv07.jpg'), ('DV08', N'/images/gemini-dv08.jpg'),
     ('DV09', N'/images/gemini-dv09.jpg'), ('DV10', N'/images/gemini-dv10.jpg'),
     ('DV11', N'/images/gemini-dv11.jpg'), ('DV12', N'/images/gemini-dv12.jpg'),

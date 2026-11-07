@@ -337,7 +337,9 @@
 }
 
 .catalog-photo img[src*="/images/gemini-dv"],
-.catalog-detail-image[src*="/images/gemini-dv"] {
+.catalog-detail-image[src*="/images/gemini-dv"],
+.catalog-photo img[src$="/images/bao-duong-xe-so-con-tay.png"],
+.catalog-detail-image[src$="/images/bao-duong-xe-so-con-tay.png"] {
   object-fit: contain;
   background: #f4f7fa;
 }

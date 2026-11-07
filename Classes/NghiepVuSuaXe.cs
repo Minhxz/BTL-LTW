@@ -18,7 +18,7 @@ public sealed class NghiepVuSuaXe(XuLyDuLieu db)
     {
         // Các bước cùng dùng một giao dịch: có lỗi thì toàn bộ thay đổi được hoàn tác.
         await KiemTraXe(s, input);
-        var(needs, prices) = await TinhDichVu(s, input);
+        var (needs, prices) = await TinhDichVu(s, input.LoaiXe.Trim(), input.DichVu);
         await TruKho(s, needs);
         var customer = await LayKhachHang(s, input);
         var plate = input.BienSo.Trim().ToUpperInvariant();
@@ -27,7 +27,7 @@ public sealed class NghiepVuSuaXe(XuLyDuLieu db)
         await s.ThucThiAsync("INSERT Xe(MaXe,MaKhachHang,BienXe,LoaiXe,HangSanXuat,MauSac) VALUES(@id,@customer,@plate,@type,@brand,@color)", new { id = vehicle, customer, plate, type = input.LoaiXe.Trim(), brand = input.HangXe.Trim(), color = input.MauSac.Trim() });
         await s.ThucThiAsync("INSERT PhieuTiepNhan(MaPhieuTiepNhan,MaXe,MaNhanVien,NgayLap,NgayHen,TrangThai) VALUES(@id,@vehicle,@employee,@today,@due,N'Chờ sửa')", new { id = receipt, vehicle, employee, today = XuLyDuLieu.HomNay, due = input.NgayHenTra.Date });
         foreach (var line in input.DichVu)
-            await s.ThucThiAsync("INSERT ChiTietPhieuTiepNhan(MaPhieuTiepNhan,MaDichVu,SoLuong,ThanhTien) VALUES(@id,@service,@quantity,@amount)", new { id = receipt, service = line.MaDichVu, quantity = line.SoLuong, amount = prices[line.MaDichVu] * line.SoLuong });
+            await s.ThucThiAsync("INSERT ChiTietPhieuTiepNhan(MaPhieuTiepNhan,MaDichVu,SoLuong,ThanhTien) VALUES(@id,@service,@quantity,@amount)", new { id = receipt, service = line.MaDichVu.Trim(), quantity = line.SoLuong, amount = prices[line.MaDichVu] * line.SoLuong });
         await s.ThucThiAsync("INSERT WebPhieuTiepNhan(MaPhieuTiepNhan) VALUES(@id)", new { id = receipt });
         foreach (var need in needs)
             await s.ThucThiAsync("INSERT WebPhieuPhuTung(MaPhieuTiepNhan,MaPhuTung,SoLuong) VALUES(@id,@part,@quantity)", new { id = receipt, part = need.Key, quantity = need.Value });
@@ -40,29 +40,51 @@ public sealed class NghiepVuSuaXe(XuLyDuLieu db)
     {
         if (input.NgayHenTra.Date < XuLyDuLieu.HomNay || input.NgayHenTra.Date > XuLyDuLieu.HomNay.AddDays(90))
             throw new ArgumentException("Ngày hẹn trả phải từ hôm nay đến 90 ngày tới.");
-        if (input.DichVu.Count == 0 || input.DichVu.Select(x => x.MaDichVu).Distinct().Count() != input.DichVu.Count)
-            throw new ArgumentException("Chọn ít nhất một dịch vụ, không chọn trùng.");
-        var plate = input.BienSo.Trim().ToUpperInvariant();
-        if (await s.DocGiaTriAsync<int>("SELECT COUNT(*) FROM Xe x WITH(UPDLOCK,HOLDLOCK) JOIN PhieuTiepNhan p ON p.MaXe=x.MaXe WHERE x.BienXe=@plate AND p.TrangThai IN(N'Chờ sửa',N'Đang sửa')", new { plate }) > 0)
+        var plate = BienSoXe.ChuanHoa(input.BienSo);
+        if (await s.DocGiaTriAsync<int>($"SELECT COUNT(*) FROM Xe x WITH(UPDLOCK,HOLDLOCK) JOIN PhieuTiepNhan p ON p.MaXe=x.MaXe WHERE {BienSoXe.KhoaSql("x.BienXe")}=@plate AND p.TrangThai IN(N'Chờ sửa',N'Đang sửa')", new { plate }) > 0)
             throw new InvalidOperationException("Xe đang có phiếu chưa hoàn thành.");
     }
 
-    private static async Task<(SortedDictionary<string, int> PhuTung, Dictionary<string, decimal> Gia)> TinhDichVu(PhienGiaoDich s, ThongTinTiepNhan input)
+    public Task<object> XemTruocPhieu(YeuCauXemTruocPhieu input) => db.TrongGiaoDichAsync<object>(async s =>
     {
+        var (needs, prices) = await TinhDichVu(s, input.LoaiXe.Trim(), input.DichVu);
+        var parts = new List<object>(needs.Count);
+        var today = XuLyDuLieu.HomNay;
+        foreach (var need in needs)
+        {
+            var part = (await s.DocBangAsync("SELECT TenPhuTung,SoLuongTon,TrangThai,HanSuDung FROM PhuTung WHERE MaPhuTung=@id", new { id = need.Key })).Single();
+            var stock = part.SoNguyen("SoLuongTon");
+            var issue = !(bool)part["TrangThai"]! ? "Ngừng sử dụng"
+                : (DateTime)part["HanSuDung"]! < today ? "Hết hạn"
+                : stock < need.Value ? "Thiếu tồn"
+                : "";
+            parts.Add(new { id = need.Key, name = part.Chuoi("TenPhuTung"), quantity = need.Value, stock, issue });
+        }
+        return new { total = input.DichVu.Sum(line => prices[line.MaDichVu] * line.SoLuong), parts };
+    });
+
+    private static async Task<(SortedDictionary<string, int> PhuTung, Dictionary<string, decimal> Gia)> TinhDichVu(
+        PhienGiaoDich s, string mauXe, List<DichVuChon> dichVu)
+    {
+        if (dichVu.Count == 0 || dichVu.Select(x => x.MaDichVu.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() != dichVu.Count)
+            throw new ArgumentException("Chọn ít nhất một dịch vụ, không chọn trùng.");
         var needs = new SortedDictionary<string, int>();
         var prices = new Dictionary<string, decimal>();
-        foreach (var line in input.DichVu.OrderBy(x => x.MaDichVu))
+        foreach (var line in dichVu.OrderBy(x => x.MaDichVu, StringComparer.OrdinalIgnoreCase))
         {
             if (line.SoLuong is < 1 or > 1000)
                 throw new ArgumentException("Số lượng dịch vụ từ 1 đến 1000.");
-            var price = await s.DocGiaTriAsync<decimal>("SELECT ThanhTienDichVu FROM DichVu WITH(UPDLOCK,HOLDLOCK) WHERE MaDichVu=@id AND TrangThai=1", new { id = line.MaDichVu });
-            if (price <= 0)
-                throw new InvalidOperationException("Dịch vụ không tồn tại hoặc đã ngừng áp dụng.");
-            prices[line.MaDichVu] = price;
-            foreach (var part in await s.DocBangAsync("SELECT MaPhuTung,SoLuong FROM ChiTietDichVu WITH(HOLDLOCK) WHERE MaDichVu=@id", new { id = line.MaDichVu }))
+            var service = (await s.DocBangAsync("SELECT TenDichVu,ThanhTienDichVu FROM DichVu WITH(UPDLOCK,HOLDLOCK) WHERE MaDichVu=@id AND TrangThai=1", new { id = line.MaDichVu.Trim() })).SingleOrDefault()
+                ?? throw new InvalidOperationException("Dịch vụ không tồn tại hoặc đã ngừng áp dụng: " + line.MaDichVu);
+            PhanLoaiXeMay.KiemTraDichVu(mauXe, service.Chuoi("TenDichVu"));
+            prices[line.MaDichVu] = service.SoTien("ThanhTienDichVu");
+            foreach (var part in await s.DocBangAsync("SELECT MaPhuTung,SoLuong FROM ChiTietDichVu WITH(HOLDLOCK) WHERE MaDichVu=@id", new { id = line.MaDichVu.Trim() }))
             {
                 var id = part.Chuoi("MaPhuTung");
-                needs[id] = checked(needs.GetValueOrDefault(id) + part.SoNguyen("SoLuong") * line.SoLuong);
+                var required = (long)needs.GetValueOrDefault(id) + (long)part.SoNguyen("SoLuong") * line.SoLuong;
+                if (required > int.MaxValue)
+                    throw new ArgumentException($"Số lượng phụ tùng {id} vượt giới hạn.");
+                needs[id] = (int)required;
             }
         }
 

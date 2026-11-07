@@ -31,17 +31,18 @@ public sealed class LichHenController(XuLyDuLieu db, NghiepVuSuaXe workflow) : C
         var phone = ChuanHoaDienThoai(input.SoDienThoai);
         if (string.IsNullOrWhiteSpace(input.BienSo) || input.HangXe.Length > 50)
             throw new ArgumentException("Nhập biển số và hãng xe tối đa 50 ký tự.");
+        var plateKey = BienSoXe.ChuanHoa(input.BienSo);
         if (!DateTime.TryParseExact(input.Ngay + " " + input.Gio, "yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) || date <= XuLyDuLieu.ThoiGianHienTai || date > XuLyDuLieu.ThoiGianHienTai.AddDays(90) || date.Hour < 8 || date.TimeOfDay > new TimeSpan(17, 30, 0) || date.Minute % 30 != 0)
             throw new ArgumentException("Chọn lịch trong 90 ngày tới, từ 08:00 đến 17:30 theo mốc 30 phút.");
         var code = "LH-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(8));
         await db.TrongGiaoDichAsync(async s =>
         {
-            var service = await s.DocGiaTriAsync<string>("SELECT MaDichVu FROM DichVu WITH(HOLDLOCK) WHERE MaDichVu=@name AND TrangThai=1", new { name = input.MaDichVu });
-            if (service == null)
-                throw new ArgumentException("Dịch vụ không còn hoạt động: " + input.MaDichVu);
-            if (await s.DocGiaTriAsync<int>("SELECT COUNT(*) FROM WebLichHen WITH(UPDLOCK,HOLDLOCK) WHERE BienXe=@plate AND TrangThai=N'Chờ xác nhận'", new { plate = input.BienSo.Trim().ToUpperInvariant() }) > 0)
+            var service = (await s.DocBangAsync("SELECT MaDichVu,TenDichVu FROM DichVu WITH(HOLDLOCK) WHERE MaDichVu=@name AND TrangThai=1", new { name = input.MaDichVu })).SingleOrDefault()
+                ?? throw new ArgumentException("Dịch vụ không còn hoạt động: " + input.MaDichVu);
+            PhanLoaiXeMay.KiemTraDichVu(input.LoaiXe.Trim(), service.Chuoi("TenDichVu"));
+            if (await s.DocGiaTriAsync<int>($"SELECT COUNT(*) FROM WebLichHen WITH(UPDLOCK,HOLDLOCK) WHERE {BienSoXe.KhoaSql("BienXe")}=@plate AND TrangThai=N'Chờ xác nhận'", new { plate = plateKey }) > 0)
                 throw new InvalidOperationException("Xe đã có lịch đang chờ xác nhận. Hãy tra cứu hoặc liên hệ cửa hàng.");
-            await s.ThucThiAsync("INSERT WebLichHen(MaLichHen,TenKhachHang,SoDienThoai,BienXe,LoaiXe,HangSanXuat,MauSac,MaDichVu,NgayHen,GhiChu,TrangThai,NgayTao) VALUES(@code,@name,@phone,@plate,@type,@brand,N'Chưa cập nhật',@service,@date,@note,N'Chờ xác nhận',@now)", new { code, name = input.TenKhachHang.Trim(), phone, plate = input.BienSo.Trim().ToUpperInvariant(), type = input.LoaiXe.Trim(), brand = input.HangXe.Trim(), service, date, note = input.GhiChu?.Trim() ?? "", now = XuLyDuLieu.ThoiGianHienTai });
+            await s.ThucThiAsync("INSERT WebLichHen(MaLichHen,TenKhachHang,SoDienThoai,BienXe,LoaiXe,HangSanXuat,MauSac,MaDichVu,NgayHen,GhiChu,TrangThai,NgayTao) VALUES(@code,@name,@phone,@plate,@type,@brand,N'Chưa cập nhật',@service,@date,@note,N'Chờ xác nhận',@now)", new { code, name = input.TenKhachHang.Trim(), phone, plate = input.BienSo.Trim().ToUpperInvariant(), type = input.LoaiXe.Trim(), brand = input.HangXe.Trim(), service = service.Chuoi("MaDichVu"), date, note = input.GhiChu?.Trim() ?? "", now = XuLyDuLieu.ThoiGianHienTai });
             return true;
         });
         return StatusCode(201, new { reference = code, date = input.Ngay, time = input.Gio, service = input.MaDichVu });
@@ -96,7 +97,7 @@ public sealed class LichHenController(XuLyDuLieu db, NghiepVuSuaXe workflow) : C
         };
         var where = " WHERE (w.TenKhachHang LIKE @q OR w.BienXe LIKE @q OR w.SoDienThoai LIKE @q OR w.MaLichHen LIKE @q)";
         var total = await db.DocGiaTriAsync<int>("SELECT COUNT(*) FROM WebLichHen w" + where, args);
-        var items = await db.DocBangAsync("SELECT w.MaLichHen id,w.TenKhachHang customerName,w.SoDienThoai phone,w.BienXe licensePlate,w.HangSanXuat brand,w.LoaiXe vehicleType,w.NgayHen date,w.TrangThai status,w.GhiChu note,w.MaPhieuTiepNhan jobId,d.TenDichVu service FROM WebLichHen w JOIN DichVu d ON d.MaDichVu=w.MaDichVu" + where + " ORDER BY CASE WHEN w.TrangThai=N'Chờ xác nhận' THEN 0 ELSE 1 END,w.NgayTao DESC OFFSET @skip ROWS FETCH NEXT @size ROWS ONLY", args);
+        var items = await db.DocBangAsync("SELECT w.MaLichHen id,w.TenKhachHang customerName,w.SoDienThoai phone,w.BienXe licensePlate,w.HangSanXuat brand,w.LoaiXe vehicleType,w.NgayHen date,w.TrangThai status,w.GhiChu note,w.MaPhieuTiepNhan jobId,w.MaDichVu serviceId,d.TenDichVu service FROM WebLichHen w JOIN DichVu d ON d.MaDichVu=w.MaDichVu" + where + " ORDER BY CASE WHEN w.TrangThai=N'Chờ xác nhận' THEN 0 ELSE 1 END,w.NgayTao DESC OFFSET @skip ROWS FETCH NEXT @size ROWS ONLY", args);
         return Ok(new { items, total, page, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) });
     }
 
