@@ -30,16 +30,48 @@ public sealed class DanhMucController(XuLyDuLieu db) : ControllerBase
         var fields = spec.CacTruong.Where(f => f.Kieu != "password").ToList();
         var columns = string.Join(',', fields.Select(f => $"[{f.Ten}]"));
         var terms = fields.Where(f => f.Kieu is "text" or "code" or "phone").Select(f => $"[{f.Ten}] LIKE @q");
+        if (kind == "customers")
+        {
+            var plate = BienSoXe.KhoaSql("x.BienXe");
+            var plateQuery = BienSoXe.KhoaSql("@query");
+            columns += $",(SELECT COUNT(DISTINCT {plate}) FROM Xe x WHERE x.MaKhachHang=KhachHang.MaKhachHang) AS vehicleCount";
+            terms = terms.Append($"EXISTS (SELECT 1 FROM Xe x WHERE x.MaKhachHang=KhachHang.MaKhachHang AND {plate} LIKE '%' + NULLIF({plateQuery}, '') + '%')");
+        }
         var where = terms.Any() ? " WHERE (" + string.Join(" OR ", terms) + ")" : "";
+        var query = (q ?? "").Trim();
         var args = new
         {
-            q = "%" + (q ?? "").Trim() + "%",
+            q = "%" + query + "%",
+            query,
             skip = (page - 1) * pageSize,
             size = pageSize
         };
         var total = await db.DocGiaTriAsync<int>($"SELECT COUNT(*) FROM [{spec.Bang}]" + where, args);
         var items = await db.DocBangAsync($"SELECT {columns} FROM [{spec.Bang}] {where} ORDER BY {string.Join(',', spec.Khoa.Select(k => $"[{k}]"))} OFFSET @skip ROWS FETCH NEXT @size ROWS ONLY", args);
         return Ok(new { items, total, page, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) });
+    }
+
+    [HttpGet("customers/{customerId}/vehicles")]
+    public async Task<IActionResult> XeCuaKhach(string customerId)
+    {
+        CauHinh("customers");
+        var rows = await db.DocBangAsync($$"""
+            WITH XeTheoBienSo AS (
+                SELECT x.BienXe, x.LoaiXe, x.HangSanXuat, x.MauSac,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY {{BienSoXe.KhoaSql("x.BienXe")}}
+                           ORDER BY p.NgayLap DESC, x.MaXe DESC
+                       ) AS rn
+                FROM Xe x
+                OUTER APPLY (SELECT MAX(NgayLap) AS NgayLap FROM PhieuTiepNhan WHERE MaXe=x.MaXe) p
+                WHERE x.MaKhachHang=@customerId
+            )
+            SELECT BienXe, LoaiXe, HangSanXuat, MauSac
+            FROM XeTheoBienSo
+            WHERE rn=1
+            ORDER BY BienXe
+            """, new { customerId });
+        return Ok(rows);
     }
 
     [HttpGet("options/{kind}")]

@@ -150,7 +150,7 @@
       ],
       [
         "KHÁCH HÀNG & DỊCH VỤ",
-        ["customers", "vehicles", "services", "serviceParts"].map((x) => [
+        ["customers", "services", "serviceParts"].map((x) => [
           x,
           "◇",
         ]),
@@ -206,8 +206,9 @@
     states = false,
     add = false,
     extra = "",
+    placeholder = "Tìm mã, tên hoặc thông tin…",
   } = {}) {
-    return `<form id="filters" class="toolbar"><input name="q" class="search" placeholder="Tìm mã, tên hoặc thông tin…" aria-label="Tìm kiếm" value="${esc(q)}" maxlength="150"/>${states ? `<select name="status" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${["Chờ sửa", "Đang sửa", "Hoàn thành", "Đã hủy"].map((s) => `<option ${s === status ? "selected" : ""}>${s}</option>`).join("")}</select>` : ""}${dates ? `<input name="from" aria-label="Từ ngày" type="date" value="${from}"/><input name="to" aria-label="Đến ngày" type="date" value="${to}"/>` : ""}<button class="button secondary">Lọc</button>${btn("Làm mới", "reset")}${add ? btn("+ Thêm mới", "create", "", "primary") : ""}${extra}</form>`;
+    return `<form id="filters" class="toolbar"><input name="q" class="search" placeholder="${esc(placeholder)}" aria-label="Tìm kiếm" value="${esc(q)}" maxlength="150"/>${states ? `<select name="status" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${["Chờ sửa", "Đang sửa", "Hoàn thành", "Đã hủy"].map((s) => `<option ${s === status ? "selected" : ""}>${s}</option>`).join("")}</select>` : ""}${dates ? `<input name="from" aria-label="Từ ngày" type="date" value="${from}"/><input name="to" aria-label="Đến ngày" type="date" value="${to}"/>` : ""}<button class="button secondary">Lọc</button>${btn("Làm mới", "reset")}${add ? btn("+ Thêm mới", "create", "", "primary") : ""}${extra}</form>`;
   }
   function taoBang(columns, rows, actions) {
     return `<div class="table-wrap"><table><thead><tr>${columns.map((c) => `<th>${esc(c[1])}</th>`).join("")}${actions ? "<th>Thao tác</th>" : ""}</tr></thead><tbody>${rows.length ? rows.map((row, index) => `<tr>${columns.map(([key, label, render]) => `<td>${render ? render(row[key], row) : esc(row[key] ?? "—")}</td>`).join("")}${actions ? `<td><div class="row-actions">${actions(row, index)}</div></td>` : ""}</tr>`).join("") : `<tr><td colspan="${columns.length + (actions ? 1 : 0)}"><div class="empty">Chưa có dữ liệu phù hợp. Thử thay bộ lọc hoặc thêm bản ghi mới.</div></td></tr>`}</tbody></table></div>`;
@@ -260,7 +261,22 @@
         const d = await api(endpoint + "?" + layBoLoc());
         if (turn !== loadingId) return;
         current = d.items;
-        if (spec) {
+        if (section === "customers") {
+          html =
+            taoBoLoc({ placeholder: "Tìm mã, tên, số điện thoại hoặc biển số…" }) +
+            (d.items.length
+              ? taoBang(
+                  [
+                    ["MaKhachHang", "Mã khách hàng"],
+                    ["TenKhachHang", "Tên khách hàng"],
+                    ["SoDienThoai", "Số điện thoại"],
+                    ["vehicleCount", "Số xe"],
+                  ],
+                  d.items,
+                  (_, i) => btn("Xem xe", "customer-vehicles", i) + btn("Sửa", "edit", i),
+                )
+              : '<div class="empty">Không tìm thấy khách hàng phù hợp.</div>');
+        } else if (spec) {
           const cols = spec.fields
             .filter((f) => f.type !== "password")
             .map((f) => [
@@ -468,6 +484,30 @@
   }
   const modelHint = 'list="motorcycle-models" placeholder="Ví dụ: Vision"';
   const brandHint = 'list="motorcycle-brands" placeholder="Ví dụ: Honda"';
+  async function xemXeCuaKhach(customer, target) {
+    target.disabled = true;
+    try {
+      const rows = await api("/api/catalog/customers/" + encodeURIComponent(customer.MaKhachHang) + "/vehicles");
+      if (!target.isConnected || dialog.open) return;
+      moHopThoai(
+        "Xe của " + customer.TenKhachHang,
+        rows.length
+          ? taoBang(
+              [
+                ["BienXe", "Biển số"],
+                ["LoaiXe", "Mẫu xe"],
+                ["HangSanXuat", "Hãng xe"],
+                ["MauSac", "Màu sắc"],
+              ],
+              rows,
+            )
+          : '<div class="empty">Khách hàng chưa có xe.</div>',
+      );
+    } finally {
+      target.disabled = false;
+    }
+  }
+
   async function suaDanhMuc(index) {
     const spec = specs.find((x) => x.id === section),
       row = index == null ? null : current[index];
@@ -821,6 +861,7 @@
           ? nhapKho()
           : suaDanhMuc(null);
     if (action === "create-job") return tiepNhanXe();
+    if (action === "customer-vehicles") return xemXeCuaKhach(current[Number(id)], target);
     if (action === "edit") return suaDanhMuc(Number(id));
     if (action === "delete") {
       const spec = specs.find((s) => s.id === section),
@@ -989,6 +1030,7 @@
     }
   });
   function chuyenTrang() {
+    if (location.hash === "#vehicles") history.replaceState(history.state, "", "#customers");
     const next = location.hash.slice(1) || "dashboard";
     if (next !== section) {
       page = 1;
