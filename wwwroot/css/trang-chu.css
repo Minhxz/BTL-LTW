@@ -267,7 +267,7 @@ summary:focus-visible {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center 56%;
+  object-position: center 80%;
   position: absolute;
   inset: 0;
 }
@@ -1242,7 +1242,7 @@ summary:focus-visible {
     padding-top: 145px;
   }
   .hero-image {
-    object-position: center 60%;
+    object-position: center 80%;
   }
 }
 @media (max-width: 1180px) {
