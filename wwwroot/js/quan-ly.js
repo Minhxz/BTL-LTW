@@ -569,37 +569,111 @@
     body.dataset.lineOptions = serviceOptions;
     themDong();
   }
+  // Thêm một dòng (chọn dịch vụ/phụ tùng + số lượng) vào form đang mở.
+  // Dùng chung cho phiếu nhập kho (Người 4) và tiếp nhận xe (Người 3).
   function themDong() {
-    const lines = document.querySelector("#lines");
-    // Mỗi form tự khai báo số lượng tối đa (phiếu nhập cho phép tới 100.000 như API).
-    const max = Number(lines.dataset.max) || 1000;
-    lines.insertAdjacentHTML(
-      "beforeend",
-      `<div class="line-row"><select required aria-label="Dịch vụ hoặc phụ tùng">${body.dataset.lineOptions}</select><input aria-label="Số lượng" type="number" value="1" min="1" max="${max}" step="1" required/><button type="button" data-action="line-remove" aria-label="Xóa dòng">×</button></div>`,
+    const danhSachDong = document.querySelector("#lines");
+    // Mỗi form tự khai báo số lượng tối đa qua data-max; mặc định 1.000
+    const soLuongToiDa = Number(danhSachDong.dataset.max) || 1000;
+
+    const dongMoi = `
+      <div class="line-row">
+        <select required aria-label="Dịch vụ hoặc phụ tùng">${body.dataset.lineOptions}</select>
+        <input aria-label="Số lượng" type="number" value="1" min="1" max="${soLuongToiDa}" step="1" required />
+        <button type="button" data-action="line-remove" aria-label="Xóa dòng">×</button>
+      </div>`;
+
+    danhSachDong.insertAdjacentHTML("beforeend", dongMoi);
+  }
+
+  // Người 4: form lập phiếu nhập kho nhiều dòng.
+  async function nhapKho() {
+    const luaChonPhuTung = await options("parts");
+
+    const noiDungForm = `
+      <div class="form-grid">
+        ${field("date", "Ngày nhập", "date", today(), `required max="${today()}"`)}
+        ${field("note", "Ghi chú", "text", "", 'maxlength="255"')}
+      </div>
+      <h3 style="margin-top:24px">Phụ tùng nhập</h3>
+      <div class="line-items" id="lines" data-max="100000"></div>
+      ${btn("+ Thêm phụ tùng", "line-add")}
+      <p class="hint">
+        Đơn giá lấy từ lô phụ tùng. Tạo mã lô mới khi giá nhập hoặc hạn sử dụng thay đổi.
+        Phiếu đã ghi sổ giữ nguyên; sai lệch được xử lý bằng điều chỉnh tồn có lý do.
+      </p>`;
+
+    async function luuPhieuNhap(duLieuForm) {
+      const phieuNhap = Object.fromEntries(duLieuForm);
+
+      // Mỗi dòng trên form thành một phụ tùng trong phiếu
+      phieuNhap.lines = [...body.querySelectorAll(".line-row")].map((dong) => ({
+        partId: dong.querySelector("select").value,
+        quantity: Number(dong.querySelector("input").value),
+      }));
+
+      const ketQua = await api("/api/workshop/stock/purchases", {
+        method: "POST",
+        body: JSON.stringify(phieuNhap),
+      });
+      return ketQua.message;
+    }
+
+    moHopThoai("Lập phiếu nhập kho", noiDungForm, luuPhieuNhap, "Lưu phiếu và cộng kho");
+
+    body.dataset.lineOptions = luaChonPhuTung;
+    themDong();
+  }
+
+  // Người 4: xem chi tiết một phiếu nhập kèm tổng tiền.
+  async function xemPhieuNhap(maPhieuNhap) {
+    const duLieu = await api("/api/workshop/stock/purchases/" + encodeURIComponent(maPhieuNhap));
+
+    let tongTienNhap = 0;
+    for (const dong of duLieu.lines) {
+      tongTienNhap += Number(dong.amount);
+    }
+
+    const bangChiTiet = taoBang(
+      [
+        ["partId", "Mã phụ tùng"],
+        ["name", "Tên"],
+        ["quantity", "Số lượng"],
+        ["price", "Đơn giá nhập", money],
+        ["amount", "Thành tiền", money],
+      ],
+      duLieu.lines,
+    );
+
+    moHopThoai(
+      "Chi tiết phiếu nhập " + maPhieuNhap,
+      bangChiTiet + `<p class="hint"><strong>Tổng nhập: ${money(tongTienNhap)}</strong></p>`,
     );
   }
-  async function nhapKho() {
-    const parts = await options("parts");
-    moHopThoai(
-      "Lập phiếu nhập kho",
-      `<div class="form-grid">${field("date", "Ngày nhập", "date", today(), `required max="${today()}"`)}${field("note", "Ghi chú", "text", "", 'maxlength="255"')}</div><h3 style="margin-top:24px">Phụ tùng nhập</h3><div class="line-items" id="lines" data-max="100000"></div>${btn("+ Thêm phụ tùng", "line-add")}<p class="hint">Đơn giá lấy từ lô phụ tùng. Tạo mã lô mới khi giá nhập hoặc hạn sử dụng thay đổi. Phiếu đã ghi sổ giữ nguyên; sai lệch được xử lý bằng điều chỉnh tồn có lý do.</p>`,
-      async (d) => {
-        const input = Object.fromEntries(d);
-        input.lines = [...body.querySelectorAll(".line-row")].map((r) => ({
-          partId: r.querySelector("select").value,
-          quantity: Number(r.querySelector("input").value),
-        }));
-        return (
-          await api("/api/workshop/stock/purchases", {
-            method: "POST",
-            body: JSON.stringify(input),
-          })
-        ).message;
-      },
-      "Lưu phiếu và cộng kho",
-    );
-    body.dataset.lineOptions = parts;
-    themDong();
+
+  // Người 4: kiểm kê, nhập số tồn đếm thực tế và lý do điều chỉnh.
+  async function kiemKeTon() {
+    const luaChonPhuTung = await options("parts");
+
+    const noiDungForm = `
+      <div class="form-grid">
+        ${selectField("partId", "Phụ tùng", luaChonPhuTung)}
+        ${field("stock", "Số tồn thực tế", "number", "", 'required min="0" max="1000000" step="1"')}
+        ${field("reason", "Lý do điều chỉnh", "text", "", 'required minlength="5" maxlength="255"')}
+      </div>`;
+
+    async function luuKiemKe(duLieuForm) {
+      const kiemKe = Object.fromEntries(duLieuForm);
+      kiemKe.stock = Number(kiemKe.stock);
+
+      const ketQua = await api("/api/workshop/stock/adjust", {
+        method: "POST",
+        body: JSON.stringify(kiemKe),
+      });
+      return ketQua.message;
+    }
+
+    moHopThoai("Điều chỉnh tồn sau kiểm kê", noiDungForm, luuKiemKe);
   }
   async function xemPhieu(id, invoiceOnly = false) {
     const d = await api("/api/workshop/jobs/" + encodeURIComponent(id)),
@@ -867,42 +941,8 @@
     }
     if (action === "print-invoice") return xemPhieu(id, true);
     if (action === "print") return window.print();
-    if (action === "purchase-detail") {
-      const d = await api(
-        "/api/workshop/stock/purchases/" + encodeURIComponent(id),
-      );
-      const total = d.lines.reduce((sum, l) => sum + Number(l.amount), 0);
-      return moHopThoai(
-        "Chi tiết phiếu nhập " + id,
-        taoBang(
-          [
-            ["partId", "Mã phụ tùng"],
-            ["name", "Tên"],
-            ["quantity", "Số lượng"],
-            ["price", "Đơn giá nhập", money],
-            ["amount", "Thành tiền", money],
-          ],
-          d.lines,
-        ) + `<p class="hint"><strong>Tổng nhập: ${money(total)}</strong></p>`,
-      );
-    }
-    if (action === "stock-adjust") {
-      const choices = await options("parts");
-      return moHopThoai(
-        "Điều chỉnh tồn sau kiểm kê",
-        `<div class="form-grid">${selectField("partId", "Phụ tùng", choices)}${field("stock", "Số tồn thực tế", "number", "", 'required min="0" max="1000000" step="1"')}${field("reason", "Lý do điều chỉnh", "text", "", 'required minlength="5" maxlength="255"')}</div>`,
-        async (d) => {
-          const p = Object.fromEntries(d);
-          p.stock = Number(p.stock);
-          return (
-            await api("/api/workshop/stock/adjust", {
-              method: "POST",
-              body: JSON.stringify(p),
-            })
-          ).message;
-        },
-      );
-    }
+    if (action === "purchase-detail") return xemPhieuNhap(id);
+    if (action === "stock-adjust") return kiemKeTon();
     if (action === "password")
       return moHopThoai(
         "Đổi mật khẩu",

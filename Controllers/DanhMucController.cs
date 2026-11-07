@@ -223,39 +223,86 @@ public sealed class DanhMucController(XuLyDuLieu db) : ControllerBase
         return spec.Khoa.Select((k, i) => new KeyValuePair<string, object?>("k" + i, parts == null ? data[k] : parts[i])).ToDictionary();
     }
 
+    // Người 4: kiểm tra khi thêm/sửa lô phụ tùng.
+    // old = dữ liệu đang lưu (null khi thêm mới); data = dữ liệu người dùng gửi lên.
     private async Task KiemTraPhuTung(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
     {
-        var hanDung = (DateTime)data["HanSuDung"]!;
+        DateTime hanSuDungMoi = (DateTime)data["HanSuDung"]!;
+
+        // 1. Thêm lô mới: tồn ban đầu luôn bằng 0, hàng chỉ vào kho qua phiếu nhập
         if (old == null)
         {
-            // Lô mới luôn bắt đầu với tồn 0; hàng vào kho chỉ qua phiếu nhập.
             data["SoLuongTon"] = 0;
-            if (hanDung < XuLyDuLieu.HomNay)
-                throw new ArgumentException("Không tạo lô phụ tùng đã hết hạn sử dụng.");
-        }
-        else
-        {
-            var doiNhaCungCap = !string.Equals(Convert.ToString(data["MaNhaCungCap"]), old.Chuoi("MaNhaCungCap"), StringComparison.OrdinalIgnoreCase);
-            var doiHanDung = hanDung != Convert.ToDateTime(old["HanSuDung"]);
-            var doiGiaNhap = (decimal)data["DonGiaNhap"]! != old.SoTien("DonGiaNhap");
-            if (doiNhaCungCap || doiHanDung || doiGiaNhap)
+
+            if (hanSuDungMoi < XuLyDuLieu.HomNay)
             {
-                // Lô "đã sử dụng": còn tồn, đã có phiếu nhập, đã kiểm kê hoặc đã xuất cho phiếu sửa.
-                var daSuDung = old.SoNguyen("SoLuongTon") > 0 || await s.DocGiaTriAsync<int>("""
-                    SELECT CASE WHEN EXISTS(SELECT 1 FROM ChiTietPhieuNhap WHERE MaPhuTung=@id)
-                                  OR EXISTS(SELECT 1 FROM DieuChinhTonKho WHERE MaPhuTung=@id)
-                                  OR EXISTS(SELECT 1 FROM WebPhieuPhuTung WHERE MaPhuTung=@id)
-                                THEN 1 ELSE 0 END
-                    """, new { id = old.Chuoi("MaPhuTung") }) == 1;
-                if (daSuDung)
-                    throw new InvalidOperationException("Lô phụ tùng đã sử dụng (có tồn, nhập kho, kiểm kê hoặc xuất sửa): không đổi nhà cung cấp, hạn dùng hay giá nhập; hãy tạo mã lô mới.");
-                if (doiHanDung && hanDung < XuLyDuLieu.HomNay)
-                    throw new ArgumentException("Hạn sử dụng mới không được trước hôm nay.");
+                throw new ArgumentException("Không tạo lô phụ tùng đã hết hạn sử dụng.");
             }
 
-            if ((decimal)data["DonGiaBan"]! != old.SoTien("DonGiaBan"))
-                await s.ThucThiAsync("INSERT DieuChinhGiaBan(MaDieuChinhGia,MaPhuTung,MaNhanVien,NgayDieuChinh,GiaBanCu,GiaBanMoi,LyDo) VALUES(@id,@part,@employee,@date,@old,@next,N'Cập nhật từ website')", new { id = XuLyDuLieu.TaoMaMoi("DG"), part = old.Chuoi("MaPhuTung"), employee = PhanQuyenNguoiDung.MaNhanVien(User), date = XuLyDuLieu.HomNay, old = old.SoTien("DonGiaBan"), next = data["DonGiaBan"] });
+            return;
         }
+
+        string maPhuTung = old.Chuoi("MaPhuTung");
+
+        // 2. Sửa lô: nhà cung cấp, hạn dùng, giá nhập là thông tin của lô
+        bool doiNhaCungCap = !string.Equals(Convert.ToString(data["MaNhaCungCap"]), old.Chuoi("MaNhaCungCap"), StringComparison.OrdinalIgnoreCase);
+        bool doiHanSuDung = hanSuDungMoi != Convert.ToDateTime(old["HanSuDung"]);
+        bool doiGiaNhap = (decimal)data["DonGiaNhap"]! != old.SoTien("DonGiaNhap");
+
+        if (doiNhaCungCap || doiHanSuDung || doiGiaNhap)
+        {
+            if (await LoPhuTungDaSuDung(s, maPhuTung, old.SoNguyen("SoLuongTon")))
+            {
+                throw new InvalidOperationException("Lô phụ tùng đã sử dụng (có tồn, nhập kho, kiểm kê hoặc xuất sửa): không đổi nhà cung cấp, hạn dùng hay giá nhập; hãy tạo mã lô mới.");
+            }
+
+            if (doiHanSuDung && hanSuDungMoi < XuLyDuLieu.HomNay)
+            {
+                throw new ArgumentException("Hạn sử dụng mới không được trước hôm nay.");
+            }
+        }
+
+        // 3. Giá bán được phép đổi, nhưng phải lưu lịch sử giá bán
+        decimal giaBanCu = old.SoTien("DonGiaBan");
+        decimal giaBanMoi = (decimal)data["DonGiaBan"]!;
+
+        if (giaBanMoi != giaBanCu)
+        {
+            string sqlLuuGiaBan = "Insert Into DieuChinhGiaBan (MaDieuChinhGia, MaPhuTung, MaNhanVien, NgayDieuChinh, GiaBanCu, GiaBanMoi, LyDo) " +
+                "Values (@MaDieuChinhGia, @MaPhuTung, @MaNhanVien, @NgayDieuChinh, @GiaBanCu, @GiaBanMoi, N'Cập nhật từ website')";
+
+            await s.ThucThiAsync(sqlLuuGiaBan, new
+            {
+                MaDieuChinhGia = XuLyDuLieu.TaoMaMoi("DG"),
+                MaPhuTung = maPhuTung,
+                MaNhanVien = PhanQuyenNguoiDung.MaNhanVien(User),
+                NgayDieuChinh = XuLyDuLieu.HomNay,
+                GiaBanCu = giaBanCu,
+                GiaBanMoi = giaBanMoi
+            });
+        }
+    }
+
+    // Lô "đã sử dụng": còn tồn, đã có phiếu nhập, đã kiểm kê hoặc đã xuất cho phiếu sửa.
+    private static async Task<bool> LoPhuTungDaSuDung(PhienGiaoDich s, string maPhuTung, int soLuongTon)
+    {
+        if (soLuongTon > 0)
+        {
+            return true;
+        }
+
+        string sqlKiemTra = """
+            SELECT CASE
+                WHEN EXISTS (SELECT 1 FROM ChiTietPhieuNhap WHERE MaPhuTung = @MaPhuTung) THEN 1
+                WHEN EXISTS (SELECT 1 FROM DieuChinhTonKho WHERE MaPhuTung = @MaPhuTung) THEN 1
+                WHEN EXISTS (SELECT 1 FROM WebPhieuPhuTung WHERE MaPhuTung = @MaPhuTung) THEN 1
+                ELSE 0
+            END
+            """;
+
+        int daSuDung = await s.DocGiaTriAsync<int>(sqlKiemTra, new { MaPhuTung = maPhuTung });
+
+        return daSuDung == 1;
     }
 
     private async Task KiemTraDinhMuc(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
