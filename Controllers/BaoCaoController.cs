@@ -1,10 +1,9 @@
-using System.Text.Json.Serialization;
-using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using QLyCuaHangSuaXe.LopDungChung;
-using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Controllers;
 
@@ -12,69 +11,164 @@ namespace QLyCuaHangSuaXe.Controllers;
 [ApiController, Authorize, Route("api/workshop")]
 public sealed class BaoCaoController(XuLyDuLieu db) : ControllerBase
 {
+    // Số liệu trang tổng quan. Mỗi vai trò chỉ thấy phần của mình.
     [HttpGet("dashboard")]
     public async Task<IActionResult> TongQuan()
     {
-        var employee = PhanQuyenNguoiDung.MaNhanVien(User);
-        var mechanic = User.IsInRole("Mechanic");
-        var counts = await db.DocBangAsync("SELECT TrangThai status,COUNT(*) count FROM PhieuTiepNhan p WHERE @mine=0 OR EXISTS(SELECT 1 FROM ChiTietPhanCong c WHERE c.MaXe=p.MaXe AND c.MaNhanVien=@employee) GROUP BY TrangThai", new { mine = mechanic, employee });
-        var summary = new Dictionary<string, object?>
+        string maNhanVien = PhanQuyenNguoiDung.MaNhanVien(User);
+        bool laTho = User.IsInRole("Mechanic");
+
+        // 1. Số phiếu theo trạng thái (thợ chỉ đếm xe được phân công cho mình)
+        string sqlDemPhieu = "Select TrangThai As status, Count(*) As count " +
+            "From PhieuTiepNhan p " +
+            "Where @mine = 0 Or Exists (Select 1 From ChiTietPhanCong c Where c.MaXe = p.MaXe And c.MaNhanVien = @employee) " +
+            "Group By TrangThai";
+
+        List<Dictionary<string, object?>> soPhieuTheoTrangThai = await db.DocBangAsync(sqlDemPhieu, new { mine = laTho, employee = maNhanVien });
+
+        Dictionary<string, object?> tongQuan = new Dictionary<string, object?>
         {
-            {
-                "jobs",
-                counts
-            },
-            {
-                "database",
-                new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(db.ChuoiKetNoi).InitialCatalog
-            }
+            ["jobs"] = soPhieuTheoTrangThai,
+            ["database"] = new SqlConnectionStringBuilder(db.ChuoiKetNoi).InitialCatalog
         };
+
+        // 2. Quản lý và thu ngân: lịch chờ xác nhận, doanh thu hôm nay
         if (User.IsInRole("Manager") || User.IsInRole("Cashier"))
         {
-            summary["pendingBookings"] = await db.DocGiaTriAsync<int>("SELECT COUNT(*) FROM WebLichHen WHERE TrangThai=N'Chờ xác nhận'");
-            summary["todayRevenue"] = await db.DocGiaTriAsync<decimal>("SELECT COALESCE(SUM(TienThanhToan),0) FROM HoaDon WHERE NgayThanhToan=@today", new { today = XuLyDuLieu.HomNay });
+            tongQuan["pendingBookings"] = await db.DocGiaTriAsync<int>(
+                "Select Count(*) From WebLichHen Where TrangThai = N'Chờ xác nhận'");
+
+            tongQuan["todayRevenue"] = await db.DocGiaTriAsync<decimal>(
+                "Select Coalesce(Sum(TienThanhToan), 0) From HoaDon Where NgayThanhToan = @today",
+                new { today = XuLyDuLieu.HomNay });
         }
 
+        // 3. Quản lý: cảnh báo phụ tùng sắp hết (≤ 5) hoặc sắp hết hạn (30 ngày)
         if (User.IsInRole("Manager"))
-            summary["stockAlerts"] = await db.DocBangAsync("SELECT TOP(8) MaPhuTung id,TenPhuTung name,SoLuongTon stock,HanSuDung expiry FROM PhuTung WHERE TrangThai=1 AND (SoLuongTon<=5 OR HanSuDung<@soon) ORDER BY HanSuDung,SoLuongTon", new { soon = XuLyDuLieu.HomNay.AddDays(30) });
-        return Ok(summary);
+        {
+            string sqlCanhBaoKho = "Select Top(8) MaPhuTung As id, TenPhuTung As name, SoLuongTon As stock, HanSuDung As expiry " +
+                "From PhuTung " +
+                "Where TrangThai = 1 And (SoLuongTon <= 5 Or HanSuDung < @soon) " +
+                "Order By HanSuDung, SoLuongTon";
+
+            tongQuan["stockAlerts"] = await db.DocBangAsync(sqlCanhBaoKho, new { soon = XuLyDuLieu.HomNay.AddDays(30) });
+        }
+
+        return Ok(tongQuan);
     }
 
+    // Báo cáo theo khoảng ngày; mặc định từ đầu tháng đến hôm nay.
     [HttpGet("reports"), Authorize(Roles = "Manager")]
     public async Task<IActionResult> BaoCao(string? from = null, string? to = null)
     {
-        var dates = PhanTrang.KhoangNgay(from, to);
-        var start = dates.From ?? new DateTime(XuLyDuLieu.HomNay.Year, XuLyDuLieu.HomNay.Month, 1);
-        var end = dates.To ?? XuLyDuLieu.HomNay;
-        if (start > end)
-            throw new ArgumentException("Khoảng ngày không hợp lệ.");
-        var args = new
+        (DateTime tuNgay, DateTime denNgay) = LayKhoangBaoCao(from, to);
+
+        if (tuNgay > denNgay)
         {
-            from = start,
-            to = end
-        };
-        var paid = await db.DocGiaTriAsync<decimal>("SELECT COALESCE(SUM(TienThanhToan),0) FROM HoaDon WHERE NgayThanhToan BETWEEN @from AND @to", args);
-        var purchases = await db.DocGiaTriAsync<decimal>("SELECT COALESCE(SUM(TongTienNhap),0) FROM PhieuNhap WHERE NgayNhap BETWEEN @from AND @to", args);
-        var unpaid = await db.DocGiaTriAsync<decimal>("SELECT COALESCE(SUM(c.ThanhTien),0) FROM PhieuTiepNhan p JOIN ChiTietPhieuTiepNhan c ON c.MaPhieuTiepNhan=p.MaPhieuTiepNhan WHERE p.TrangThai=N'Hoàn thành' AND NOT EXISTS(SELECT 1 FROM HoaDon h WHERE h.MaPhieuTiepNhan=p.MaPhieuTiepNhan)");
-        var daily = await db.DocBangAsync("SELECT NgayThanhToan date,SUM(TienThanhToan) amount,COUNT(*) count FROM HoaDon WHERE NgayThanhToan BETWEEN @from AND @to GROUP BY NgayThanhToan ORDER BY NgayThanhToan", args);
-        var services = await db.DocBangAsync("SELECT TOP(8) d.TenDichVu name,SUM(c.SoLuong) quantity,SUM(c.ThanhTien) amount FROM ChiTietPhieuTiepNhan c JOIN DichVu d ON d.MaDichVu=c.MaDichVu JOIN HoaDon h ON h.MaPhieuTiepNhan=c.MaPhieuTiepNhan WHERE h.NgayThanhToan BETWEEN @from AND @to GROUP BY d.TenDichVu ORDER BY SUM(c.ThanhTien) DESC", args);
-        return Ok(new { from = start, to = end, paid, purchases, unpaid, cashDifference = paid - purchases, daily, services });
+            throw new ArgumentException("Khoảng ngày không hợp lệ.");
+        }
+
+        var thamSo = new { from = tuNgay, to = denNgay };
+
+        // Đã thu: tổng hóa đơn trong kỳ
+        decimal daThu = await db.DocGiaTriAsync<decimal>(
+            "Select Coalesce(Sum(TienThanhToan), 0) From HoaDon Where NgayThanhToan Between @from And @to", thamSo);
+
+        // Nhập kho: tổng phiếu nhập trong kỳ
+        decimal tienNhapKho = await db.DocGiaTriAsync<decimal>(
+            "Select Coalesce(Sum(TongTienNhap), 0) From PhieuNhap Where NgayNhap Between @from And @to", thamSo);
+
+        // Chưa thu: phiếu đã hoàn thành nhưng chưa có hóa đơn (không theo kỳ)
+        string sqlChuaThu = "Select Coalesce(Sum(c.ThanhTien), 0) " +
+            "From PhieuTiepNhan p Join ChiTietPhieuTiepNhan c On c.MaPhieuTiepNhan = p.MaPhieuTiepNhan " +
+            "Where p.TrangThai = N'Hoàn thành' " +
+            "And Not Exists (Select 1 From HoaDon h Where h.MaPhieuTiepNhan = p.MaPhieuTiepNhan)";
+
+        decimal chuaThu = await db.DocGiaTriAsync<decimal>(sqlChuaThu);
+
+        string sqlTheoNgay = "Select NgayThanhToan As date, Sum(TienThanhToan) As amount, Count(*) As count " +
+            "From HoaDon " +
+            "Where NgayThanhToan Between @from And @to " +
+            "Group By NgayThanhToan " +
+            "Order By NgayThanhToan";
+
+        List<Dictionary<string, object?>> doanhThuTheoNgay = await db.DocBangAsync(sqlTheoNgay, thamSo);
+
+        string sqlDichVuNhieuNhat = "Select Top(8) d.TenDichVu As name, Sum(c.SoLuong) As quantity, Sum(c.ThanhTien) As amount " +
+            "From ChiTietPhieuTiepNhan c " +
+            "Join DichVu d On d.MaDichVu = c.MaDichVu " +
+            "Join HoaDon h On h.MaPhieuTiepNhan = c.MaPhieuTiepNhan " +
+            "Where h.NgayThanhToan Between @from And @to " +
+            "Group By d.TenDichVu " +
+            "Order By Sum(c.ThanhTien) Desc";
+
+        List<Dictionary<string, object?>> dichVuNhieuNhat = await db.DocBangAsync(sqlDichVuNhieuNhat, thamSo);
+
+        return Ok(new
+        {
+            from = tuNgay,
+            to = denNgay,
+            paid = daThu,
+            purchases = tienNhapKho,
+            unpaid = chuaThu,
+            cashDifference = daThu - tienNhapKho,
+            daily = doanhThuTheoNgay,
+            services = dichVuNhieuNhat
+        });
     }
 
+    // Xuất danh sách hóa đơn trong kỳ ra file CSV (mở được bằng Excel).
     [HttpGet("reports/export"), Authorize(Roles = "Manager")]
     public async Task<IActionResult> XuatCsv(string? from = null, string? to = null)
     {
-        var dates = PhanTrang.KhoangNgay(from, to);
-        var rows = await db.DocBangAsync("SELECT MaHoaDon,MaPhieuTiepNhan,NgayThanhToan,TienThanhToan FROM HoaDon WHERE (@from IS NULL OR NgayThanhToan>=@from) AND (@to IS NULL OR NgayThanhToan<=@to) ORDER BY NgayThanhToan", new { from = dates.From ?? new DateTime(XuLyDuLieu.HomNay.Year, XuLyDuLieu.HomNay.Month, 1), to = dates.To ?? XuLyDuLieu.HomNay });
-        string Cell(object? value)
+        (DateTime tuNgay, DateTime denNgay) = LayKhoangBaoCao(from, to);
+
+        string sqlHoaDon = "Select MaHoaDon, MaPhieuTiepNhan, NgayThanhToan, TienThanhToan " +
+            "From HoaDon " +
+            "Where (@from Is Null Or NgayThanhToan >= @from) And (@to Is Null Or NgayThanhToan <= @to) " +
+            "Order By NgayThanhToan";
+
+        List<Dictionary<string, object?>> danhSachHoaDon = await db.DocBangAsync(sqlHoaDon, new { from = tuNgay, to = denNgay });
+
+        StringBuilder noiDung = new StringBuilder("Mã hóa đơn,Mã tiếp nhận,Ngày thanh toán,Số tiền\r\n");
+
+        for (int i = 0; i < danhSachHoaDon.Count; i++)
         {
-            var text = value is DateTime date ? date.ToString("yyyy-MM-dd") : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "";
-            if (text.Length > 0 && "=+-@".Contains(text[0]))
-                text = "'" + text;
-            return "\"" + text.Replace("\"", "\"\"") + "\"";
+            if (i > 0)
+            {
+                noiDung.Append("\r\n");
+            }
+
+            noiDung.Append(string.Join(',', danhSachHoaDon[i].Values.Select(TaoOCsv)));
         }
 
-        var csv = "Mã hóa đơn,Mã tiếp nhận,Ngày thanh toán,Số tiền\r\n" + string.Join("\r\n", rows.Select(r => string.Join(',', r.Values.Select(Cell))));
-        return File(Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(csv)).ToArray(), "text/csv; charset=utf-8", "doanh-thu.csv");
+        // Thêm BOM UTF-8 để Excel hiển thị đúng tiếng Việt
+        byte[] duLieuFile = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(noiDung.ToString())).ToArray();
+
+        return File(duLieuFile, "text/csv; charset=utf-8", "doanh-thu.csv");
+    }
+
+    // Bỏ trống ngày thì lấy từ đầu tháng đến hôm nay, để báo cáo và file CSV thống nhất.
+    private static (DateTime TuNgay, DateTime DenNgay) LayKhoangBaoCao(string? from, string? to)
+    {
+        (DateTime? tuNgay, DateTime? denNgay) = PhanTrang.KhoangNgay(from, to);
+        DateTime dauThang = new DateTime(XuLyDuLieu.HomNay.Year, XuLyDuLieu.HomNay.Month, 1);
+
+        return (tuNgay ?? dauThang, denNgay ?? XuLyDuLieu.HomNay);
+    }
+
+    // Một ô CSV: bọc nháy kép; thêm ' trước =, +, -, @ để Excel không chạy như công thức.
+    private static string TaoOCsv(object? giaTri)
+    {
+        string chuoi = giaTri is DateTime ngay
+            ? ngay.ToString("yyyy-MM-dd")
+            : Convert.ToString(giaTri, CultureInfo.InvariantCulture) ?? "";
+
+        if (chuoi.Length > 0 && "=+-@".Contains(chuoi[0]))
+        {
+            chuoi = "'" + chuoi;
+        }
+
+        return "\"" + chuoi.Replace("\"", "\"\"") + "\"";
     }
 }

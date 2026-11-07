@@ -1,63 +1,133 @@
-using System.Text.Json.Serialization;
-using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using QLyCuaHangSuaXe.Models;
 using QLyCuaHangSuaXe.LopDungChung;
+using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Controllers;
 
-// Người 2: đặt lịch, tra cứu, hủy và tiếp nhận lịch; gọi nghiệp vụ sửa xe dùng chung.
+// Người 2: đặt lịch, tra cứu, hủy và tiếp nhận lịch; gọi nghiệp vụ sửa xe dùng chung của Người 3.
 [ApiController]
 public sealed class LichHenController(XuLyDuLieu db, NghiepVuSuaXe workflow) : ControllerBase
 {
+    // Các bước tiến độ hiển thị cho khách khi tra cứu.
+    private static readonly string[] CacBuocTienDo = ["Chờ xác nhận", "Tiếp nhận xe", "Đang sửa chữa", "Hoàn thành"];
+
+    // Bỏ khoảng trắng, dấu chấm, gạch, ngoặc; đổi +84 thành 0. Ví dụ: "+84 912.345.678" → "0912345678".
     public static string ChuanHoaDienThoai(string text)
     {
-        var phone = Regex.Replace(text ?? "", @"[\s().-]", "");
-        if (phone.StartsWith("+84"))
-            phone = "0" + phone[3..];
-        if (!Regex.IsMatch(phone, @"^0[0-9]{8,10}$"))
+        string soDienThoai = Regex.Replace(text ?? "", @"[\s().-]", "");
+
+        if (soDienThoai.StartsWith("+84"))
+        {
+            soDienThoai = "0" + soDienThoai[3..];
+        }
+
+        if (!Regex.IsMatch(soDienThoai, @"^0[0-9]{8,10}$"))
+        {
             throw new ArgumentException("Số điện thoại không hợp lệ.");
-        return phone;
+        }
+
+        return soDienThoai;
     }
 
+    // Khách đặt lịch online. Trả về mã tra cứu LH-... để khách theo dõi.
     [HttpPost("/api/appointments"), EnableRateLimiting("public-api")]
     public async Task<IActionResult> DatLich(YeuCauDatLich input)
     {
-        var phone = ChuanHoaDienThoai(input.SoDienThoai);
+        // 1. Kiểm tra số điện thoại, biển số, hãng xe
+        string soDienThoai = ChuanHoaDienThoai(input.SoDienThoai);
+
         if (string.IsNullOrWhiteSpace(input.BienSo) || input.HangXe.Length > 50)
+        {
             throw new ArgumentException("Nhập biển số và hãng xe tối đa 50 ký tự.");
-        var plateKey = BienSoXe.ChuanHoa(input.BienSo);
-        if (!DateTime.TryParseExact(input.Ngay + " " + input.Gio, "yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) || date <= XuLyDuLieu.ThoiGianHienTai || date > XuLyDuLieu.ThoiGianHienTai.AddDays(90) || date.Hour < 8 || date.TimeOfDay > new TimeSpan(17, 30, 0) || date.Minute % 30 != 0)
+        }
+
+        string bienSoChuanHoa = BienSoXe.ChuanHoa(input.BienSo);
+
+        // 2. Giờ hẹn: trong 90 ngày tới, 08:00–17:30, theo mốc 30 phút
+        bool docDuocNgay = DateTime.TryParseExact(input.Ngay + " " + input.Gio, "yyyy-MM-dd HH:mm",
+            CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime ngayHen);
+
+        if (!docDuocNgay || !LaGioHenHopLe(ngayHen))
+        {
             throw new ArgumentException("Chọn lịch trong 90 ngày tới, từ 08:00 đến 17:30 theo mốc 30 phút.");
-        var code = "LH-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(8));
+        }
+
+        string maLichHen = "LH-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(8));
+
         await db.TrongGiaoDichAsync(async s =>
         {
-            var service = (await s.DocBangAsync("SELECT MaDichVu,TenDichVu FROM DichVu WITH(HOLDLOCK) WHERE MaDichVu=@name AND TrangThai=1", new { name = input.MaDichVu })).SingleOrDefault()
+            // 3. Dịch vụ còn hoạt động và phù hợp loại xe
+            string sqlDichVu = "Select MaDichVu, TenDichVu " +
+                "From DichVu With (HoldLock) " +
+                "Where MaDichVu = @name And TrangThai = 1";
+
+            Dictionary<string, object?> dichVu = (await s.DocBangAsync(sqlDichVu, new { name = input.MaDichVu })).SingleOrDefault()
                 ?? throw new ArgumentException("Dịch vụ không còn hoạt động: " + input.MaDichVu);
-            PhanLoaiXeMay.KiemTraDichVu(input.LoaiXe.Trim(), service.Chuoi("TenDichVu"));
-            if (await s.DocGiaTriAsync<int>($"SELECT COUNT(*) FROM WebLichHen WITH(UPDLOCK,HOLDLOCK) WHERE {BienSoXe.KhoaSql("BienXe")}=@plate AND TrangThai=N'Chờ xác nhận'", new { plate = plateKey }) > 0)
+
+            PhanLoaiXeMay.KiemTraDichVu(input.LoaiXe.Trim(), dichVu.Chuoi("TenDichVu"));
+
+            // 4. Mỗi xe chỉ có một lịch đang chờ xác nhận
+            string sqlLichDangCho = "Select Count(*) " +
+                "From WebLichHen With (UpdLock, HoldLock) " +
+                "Where " + BienSoXe.KhoaSql("BienXe") + " = @plate And TrangThai = N'Chờ xác nhận'";
+
+            if (await s.DocGiaTriAsync<int>(sqlLichDangCho, new { plate = bienSoChuanHoa }) > 0)
+            {
                 throw new InvalidOperationException("Xe đã có lịch đang chờ xác nhận. Hãy tra cứu hoặc liên hệ cửa hàng.");
-            await s.ThucThiAsync("INSERT WebLichHen(MaLichHen,TenKhachHang,SoDienThoai,BienXe,LoaiXe,HangSanXuat,MauSac,MaDichVu,NgayHen,GhiChu,TrangThai,NgayTao) VALUES(@code,@name,@phone,@plate,@type,@brand,N'Chưa cập nhật',@service,@date,@note,N'Chờ xác nhận',@now)", new { code, name = input.TenKhachHang.Trim(), phone, plate = input.BienSo.Trim().ToUpperInvariant(), type = input.LoaiXe.Trim(), brand = input.HangXe.Trim(), service = service.Chuoi("MaDichVu"), date, note = input.GhiChu?.Trim() ?? "", now = XuLyDuLieu.ThoiGianHienTai });
+            }
+
+            // 5. Lưu lịch hẹn
+            string sqlThemLich = "Insert Into WebLichHen (MaLichHen, TenKhachHang, SoDienThoai, BienXe, LoaiXe, HangSanXuat, MauSac, MaDichVu, NgayHen, GhiChu, TrangThai, NgayTao) " +
+                "Values (@code, @name, @phone, @plate, @type, @brand, N'Chưa cập nhật', @service, @date, @note, N'Chờ xác nhận', @now)";
+
+            await s.ThucThiAsync(sqlThemLich, new
+            {
+                code = maLichHen,
+                name = input.TenKhachHang.Trim(),
+                phone = soDienThoai,
+                plate = input.BienSo.Trim().ToUpperInvariant(),
+                type = input.LoaiXe.Trim(),
+                brand = input.HangXe.Trim(),
+                service = dichVu.Chuoi("MaDichVu"),
+                date = ngayHen,
+                note = input.GhiChu?.Trim() ?? "",
+                now = XuLyDuLieu.ThoiGianHienTai
+            });
+
             return true;
         });
-        return StatusCode(201, new { reference = code, date = input.Ngay, time = input.Gio, service = input.MaDichVu });
+
+        return StatusCode(201, new { reference = maLichHen, date = input.Ngay, time = input.Gio, service = input.MaDichVu });
     }
 
+    // Khách tra cứu lịch bằng mã + số điện thoại (phải khớp cả hai).
     [HttpGet("/api/repairs/lookup"), EnableRateLimiting("public-api")]
     public async Task<IActionResult> TraCuu(string reference, string phone)
     {
         if (reference.Length > 40)
+        {
             throw new ArgumentException("Mã tra cứu không hợp lệ.");
-        var row = (await db.DocBangAsync("SELECT w.*,d.TenDichVu,p.TrangThai TienDo FROM WebLichHen w JOIN DichVu d ON d.MaDichVu=w.MaDichVu LEFT JOIN PhieuTiepNhan p ON p.MaPhieuTiepNhan=w.MaPhieuTiepNhan WHERE w.MaLichHen=@reference AND w.SoDienThoai=@phone", new { reference, phone = ChuanHoaDienThoai(phone) })).SingleOrDefault();
-        if (row == null)
-            throw new KeyNotFoundException("Không tìm thấy lịch hẹn khớp mã và số điện thoại.");
-        var label = row.Chuoi("TienDo")is "" ? row.Chuoi("TrangThai") : row.Chuoi("TienDo");
-        var status = label switch
+        }
+
+        string sqlTraCuu = "Select w.*, d.TenDichVu, p.TrangThai As TienDo " +
+            "From WebLichHen w " +
+            "Join DichVu d On d.MaDichVu = w.MaDichVu " +
+            "Left Join PhieuTiepNhan p On p.MaPhieuTiepNhan = w.MaPhieuTiepNhan " +
+            "Where w.MaLichHen = @reference And w.SoDienThoai = @phone";
+
+        Dictionary<string, object?> lichHen = (await db.DocBangAsync(sqlTraCuu, new { reference, phone = ChuanHoaDienThoai(phone) })).SingleOrDefault()
+            ?? throw new KeyNotFoundException("Không tìm thấy lịch hẹn khớp mã và số điện thoại.");
+
+        // Đã có phiếu sửa thì lấy tiến độ của phiếu, chưa có thì lấy trạng thái của lịch
+        string tienDo = lichHen.Chuoi("TienDo");
+        string nhanTrangThai = tienDo == "" ? lichHen.Chuoi("TrangThai") : tienDo;
+
+        string trangThai = nhanTrangThai switch
         {
             "Chờ xác nhận" => "Pending",
             "Chờ sửa" => "Confirmed",
@@ -65,61 +135,163 @@ public sealed class LichHenController(XuLyDuLieu db, NghiepVuSuaXe workflow) : C
             "Hoàn thành" => "Completed",
             _ => "Cancelled"
         };
-        var stage = status switch
+
+        int buocHienTai = trangThai switch
         {
             "Confirmed" => 1,
             "InProgress" => 2,
             "Completed" => 4,
             _ => 0
         };
-        var date = (DateTime)row["NgayHen"]!;
-        return Ok(new { reference, customerName = row.Chuoi("TenKhachHang"), vehicleType = row.Chuoi("LoaiXe"), brand = row.Chuoi("HangSanXuat"), licensePlate = row.Chuoi("BienXe"), service = row.Chuoi("TenDichVu"), date = date.ToString("yyyy-MM-dd"), time = date.ToString("HH:mm"), status, statusLabel = label, canCancel = status == "Pending", stages = new[] { "Chờ xác nhận", "Tiếp nhận xe", "Đang sửa chữa", "Hoàn thành" }.Select((title, i) => new { title, description = "", state = i < stage ? "completed" : i == stage ? "current" : "upcoming" }) });
+
+        var cacBuoc = CacBuocTienDo.Select((tieuDe, i) => new
+        {
+            title = tieuDe,
+            description = "",
+            state = i < buocHienTai ? "completed" : i == buocHienTai ? "current" : "upcoming"
+        });
+
+        DateTime ngayHen = (DateTime)lichHen["NgayHen"]!;
+
+        return Ok(new
+        {
+            reference,
+            customerName = lichHen.Chuoi("TenKhachHang"),
+            vehicleType = lichHen.Chuoi("LoaiXe"),
+            brand = lichHen.Chuoi("HangSanXuat"),
+            licensePlate = lichHen.Chuoi("BienXe"),
+            service = lichHen.Chuoi("TenDichVu"),
+            date = ngayHen.ToString("yyyy-MM-dd"),
+            time = ngayHen.ToString("HH:mm"),
+            status = trangThai,
+            statusLabel = nhanTrangThai,
+            canCancel = trangThai == "Pending",
+            stages = cacBuoc
+        });
     }
 
+    // Khách tự hủy lịch: chỉ khi lịch còn chờ xác nhận và chưa tạo phiếu.
     [HttpPost("/api/appointments/{reference}/cancel"), EnableRateLimiting("public-api")]
     public async Task<IActionResult> HuyLich(string reference, YeuCauHuyLich input)
     {
-        var phone = ChuanHoaDienThoai(input.SoDienThoai);
-        if (await db.ThucThiAsync("UPDATE WebLichHen SET TrangThai=N'Đã hủy' WHERE MaLichHen=@reference AND SoDienThoai=@phone AND TrangThai=N'Chờ xác nhận' AND MaPhieuTiepNhan IS NULL", new { reference, phone }) != 1)
+        string soDienThoai = ChuanHoaDienThoai(input.SoDienThoai);
+
+        string sqlHuyLich = "Update WebLichHen " +
+            "Set TrangThai = N'Đã hủy' " +
+            "Where MaLichHen = @reference And SoDienThoai = @phone And TrangThai = N'Chờ xác nhận' And MaPhieuTiepNhan Is Null";
+
+        if (await db.ThucThiAsync(sqlHuyLich, new { reference, phone = soDienThoai }) != 1)
+        {
             throw new InvalidOperationException("Lịch không tồn tại hoặc đã tiếp nhận. Liên hệ cửa hàng để thay đổi.");
-        return await TraCuu(reference, phone);
+        }
+
+        return await TraCuu(reference, soDienThoai);
     }
 
+    // Nhân viên xem danh sách lịch; lịch chờ xác nhận lên đầu.
     [HttpGet("/api/workshop/bookings"), Authorize(Roles = "Manager,Cashier")]
     public async Task<IActionResult> DanhSachLichHen(string? q = null, int page = 1, int pageSize = 12)
     {
         PhanTrang.KiemTra(page, pageSize, q);
-        var args = new
+
+        var thamSo = new
         {
             q = "%" + q + "%",
             skip = (page - 1) * pageSize,
             size = pageSize
         };
-        var where = " WHERE (w.TenKhachHang LIKE @q OR w.BienXe LIKE @q OR w.SoDienThoai LIKE @q OR w.MaLichHen LIKE @q)";
-        var total = await db.DocGiaTriAsync<int>("SELECT COUNT(*) FROM WebLichHen w" + where, args);
-        var items = await db.DocBangAsync("SELECT w.MaLichHen id,w.TenKhachHang customerName,w.SoDienThoai phone,w.BienXe licensePlate,w.HangSanXuat brand,w.LoaiXe vehicleType,w.NgayHen date,w.TrangThai status,w.GhiChu note,w.MaPhieuTiepNhan jobId,w.MaDichVu serviceId,d.TenDichVu service FROM WebLichHen w JOIN DichVu d ON d.MaDichVu=w.MaDichVu" + where + " ORDER BY CASE WHEN w.TrangThai=N'Chờ xác nhận' THEN 0 ELSE 1 END,w.NgayTao DESC OFFSET @skip ROWS FETCH NEXT @size ROWS ONLY", args);
-        return Ok(new { items, total, page, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) });
+
+        const string dieuKienLoc = " Where (w.TenKhachHang Like @q Or w.BienXe Like @q Or w.SoDienThoai Like @q Or w.MaLichHen Like @q)";
+
+        string sqlDem = "Select Count(*) From WebLichHen w" + dieuKienLoc;
+
+        string sqlDanhSach = "Select w.MaLichHen As id, w.TenKhachHang As customerName, w.SoDienThoai As phone, w.BienXe As licensePlate, " +
+            "w.HangSanXuat As brand, w.LoaiXe As vehicleType, w.NgayHen As date, w.TrangThai As status, w.GhiChu As note, " +
+            "w.MaPhieuTiepNhan As jobId, w.MaDichVu As serviceId, d.TenDichVu As service " +
+            "From WebLichHen w Join DichVu d On d.MaDichVu = w.MaDichVu" +
+            dieuKienLoc +
+            " Order By Case When w.TrangThai = N'Chờ xác nhận' Then 0 Else 1 End, w.NgayTao Desc " +
+            "Offset @skip Rows Fetch Next @size Rows Only";
+
+        int tongSoLich = await db.DocGiaTriAsync<int>(sqlDem, thamSo);
+        List<Dictionary<string, object?>> danhSachLich = await db.DocBangAsync(sqlDanhSach, thamSo);
+
+        return Ok(new
+        {
+            items = danhSachLich,
+            total = tongSoLich,
+            page,
+            totalPages = Math.Max(1, (int)Math.Ceiling(tongSoLich / (double)pageSize))
+        });
     }
 
+    // Nhận lịch: tạo phiếu tiếp nhận (gọi nghiệp vụ của Người 3, có trừ kho) và gắn phiếu vào lịch.
     [HttpPost("/api/workshop/bookings/{id}/accept"), Authorize(Roles = "Manager,Cashier")]
     public async Task<IActionResult> TiepNhanLich(string id, YeuCauNhanLich input)
     {
-        var code = await db.TrongGiaoDichAsync(async s =>
+        string maPhieu = await db.TrongGiaoDichAsync(async s =>
         {
-            var row = (await s.DocBangAsync("SELECT * FROM WebLichHen WITH(UPDLOCK,HOLDLOCK) WHERE MaLichHen=@id AND TrangThai=N'Chờ xác nhận' AND MaPhieuTiepNhan IS NULL", new { id })).SingleOrDefault() ?? throw new InvalidOperationException("Lịch đã xử lý hoặc không tồn tại.");
-            var intake = new ThongTinTiepNhan(row.Chuoi("TenKhachHang"), row.Chuoi("SoDienThoai"), row.Chuoi("BienXe"), row.Chuoi("LoaiXe"), row.Chuoi("HangSanXuat"), input.MauSac, input.NgayHenTra, [new(row.Chuoi("MaDichVu"), 1)], input.MaTho);
-            var receipt = await workflow.TaoPhieu(s, intake, PhanQuyenNguoiDung.MaNhanVien(User));
-            await s.ThucThiAsync("UPDATE WebLichHen SET TrangThai=N'Đã tiếp nhận',MaPhieuTiepNhan=@receipt WHERE MaLichHen=@id", new { id, receipt });
-            return receipt;
+            string sqlLichHen = "Select * " +
+                "From WebLichHen With (UpdLock, HoldLock) " +
+                "Where MaLichHen = @id And TrangThai = N'Chờ xác nhận' And MaPhieuTiepNhan Is Null";
+
+            Dictionary<string, object?> lichHen = (await s.DocBangAsync(sqlLichHen, new { id })).SingleOrDefault()
+                ?? throw new InvalidOperationException("Lịch đã xử lý hoặc không tồn tại.");
+
+            ThongTinTiepNhan thongTinTiepNhan = new ThongTinTiepNhan(
+                lichHen.Chuoi("TenKhachHang"),
+                lichHen.Chuoi("SoDienThoai"),
+                lichHen.Chuoi("BienXe"),
+                lichHen.Chuoi("LoaiXe"),
+                lichHen.Chuoi("HangSanXuat"),
+                input.MauSac,
+                input.NgayHenTra,
+                [new DichVuChon(lichHen.Chuoi("MaDichVu"), 1)],
+                input.MaTho);
+
+            string maPhieuMoi = await workflow.TaoPhieu(s, thongTinTiepNhan, PhanQuyenNguoiDung.MaNhanVien(User));
+
+            string sqlCapNhatLich = "Update WebLichHen " +
+                "Set TrangThai = N'Đã tiếp nhận', MaPhieuTiepNhan = @receipt " +
+                "Where MaLichHen = @id";
+
+            await s.ThucThiAsync(sqlCapNhatLich, new { id, receipt = maPhieuMoi });
+
+            return maPhieuMoi;
         });
-        return Ok(new { id = code, message = "Đã tiếp nhận lịch hẹn thành phiếu sửa chữa." });
+
+        return Ok(new { id = maPhieu, message = "Đã tiếp nhận lịch hẹn thành phiếu sửa chữa." });
     }
 
     [HttpPost("/api/workshop/bookings/{id}/reject"), Authorize(Roles = "Manager,Cashier")]
     public async Task<IActionResult> TuChoiLich(string id)
     {
-        if (await db.ThucThiAsync("UPDATE WebLichHen SET TrangThai=N'Đã hủy' WHERE MaLichHen=@id AND TrangThai=N'Chờ xác nhận'", new { id }) != 1)
+        string sqlTuChoi = "Update WebLichHen " +
+            "Set TrangThai = N'Đã hủy' " +
+            "Where MaLichHen = @id And TrangThai = N'Chờ xác nhận'";
+
+        if (await db.ThucThiAsync(sqlTuChoi, new { id }) != 1)
+        {
             throw new InvalidOperationException("Lịch đã được xử lý.");
+        }
+
         return Ok(new { message = "Đã hủy yêu cầu đặt lịch." });
+    }
+
+    private static bool LaGioHenHopLe(DateTime ngayHen)
+    {
+        DateTime bayGio = XuLyDuLieu.ThoiGianHienTai;
+
+        if (ngayHen <= bayGio || ngayHen > bayGio.AddDays(90))
+        {
+            return false;
+        }
+
+        if (ngayHen.Hour < 8 || ngayHen.TimeOfDay > new TimeSpan(17, 30, 0))
+        {
+            return false;
+        }
+
+        return ngayHen.Minute % 30 == 0;
     }
 }

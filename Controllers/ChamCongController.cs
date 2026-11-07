@@ -1,12 +1,6 @@
-using System.ComponentModel.DataAnnotations;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Globalization;
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QLyCuaHangSuaXe.LopDungChung;
-using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Controllers;
 
@@ -17,8 +11,25 @@ public sealed class ChamCongController(XuLyDuLieu db) : ControllerBase
     [HttpGet("my-attendance")]
     public async Task<IActionResult> CongCaNhan(string? from = null, string? to = null)
     {
-        var dates = PhanTrang.KhoangNgay(from, to);
-        var items = await db.DocBangAsync("SELECT a.NgayLam date,a.MaCaLam shift,c.ThoiGianBatDau start,c.ThoiGianKetThuc [end],a.TongThoiGianLamThucTe hours FROM ChiTietCaLam a JOIN CaLam c ON c.MaCaLam=a.MaCaLam WHERE a.MaNhanVien=@employee AND (@from IS NULL OR a.NgayLam>=@from) AND (@to IS NULL OR a.NgayLam<=@to) ORDER BY a.NgayLam DESC", new { employee = PhanQuyenNguoiDung.MaNhanVien(User), from = dates.From, to = dates.To });
-        return Ok(new { items, totalHours = items.Sum(r => r.SoTien("hours")) });
+        (DateTime? tuNgay, DateTime? denNgay) = PhanTrang.KhoangNgay(from, to);
+
+        // Chỉ lấy công của chính người đang đăng nhập; bỏ trống ngày thì không lọc theo ngày đó
+        string sqlCong = "Select a.NgayLam As date, a.MaCaLam As shift, c.ThoiGianBatDau As start, c.ThoiGianKetThuc As [end], a.TongThoiGianLamThucTe As hours " +
+            "From ChiTietCaLam a Join CaLam c On c.MaCaLam = a.MaCaLam " +
+            "Where a.MaNhanVien = @employee " +
+            "And (@from Is Null Or a.NgayLam >= @from) " +
+            "And (@to Is Null Or a.NgayLam <= @to) " +
+            "Order By a.NgayLam Desc";
+
+        List<Dictionary<string, object?>> danhSachCong = await db.DocBangAsync(sqlCong, new
+        {
+            employee = PhanQuyenNguoiDung.MaNhanVien(User),
+            from = tuNgay,
+            to = denNgay
+        });
+
+        decimal tongGio = danhSachCong.Sum(dong => dong.SoTien("hours"));
+
+        return Ok(new { items = danhSachCong, totalHours = tongGio });
     }
 }

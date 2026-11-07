@@ -1,12 +1,17 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Globalization;
-using System.Security.Claims;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using QLyCuaHangSuaXe.LopDungChung;
-using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Models;
-public sealed record PhuTungNhap([Required, StringLength(10)][property: JsonPropertyName("partId")] string MaPhuTung, [Range(1, 100000)][property: JsonPropertyName("quantity")] int SoLuong);
+
+// Người 4: một dòng phụ tùng trong phiếu nhập kho.
+// Không nhận đơn giá từ trình duyệt: máy chủ lấy giá nhập của lô phụ tùng.
+public sealed class PhuTungNhap
+{
+    [Required(ErrorMessage = "Chọn phụ tùng cần nhập."), StringLength(10)]
+    [JsonPropertyName("partId")]
+    public string MaPhuTung { get; set; } = "";
+
+    [Range(1, 100000, ErrorMessage = "Số lượng nhập từ 1 đến 100.000.")]
+    [JsonPropertyName("quantity")]
+    public int SoLuong { get; set; }
+}

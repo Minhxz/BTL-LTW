@@ -63,8 +63,16 @@
     myAttendance: "Công cá nhân",
     profile: "Tài khoản cá nhân",
   };
+  // Màu nhãn trạng thái: xanh lá = xong, vàng = đang chờ, xanh dương = đang sửa, đỏ = đã hủy.
+  function mauTrangThai(trangThai) {
+    if (["Hoàn thành", "Đã tiếp nhận"].includes(trangThai)) return "green";
+    if (["Chờ sửa", "Chờ xác nhận"].includes(trangThai)) return "amber";
+    if (trangThai === "Đang sửa") return "blue";
+    if (trangThai === "Đã hủy") return "red";
+    return "";
+  }
   const badge = (s) =>
-    `<span class="badge ${["Hoàn thành", "Đã tiếp nhận"].includes(s) ? "green" : ["Chờ sửa", "Chờ xác nhận"].includes(s) ? "amber" : s === "Đang sửa" ? "blue" : s === "Đã hủy" ? "red" : ""}">${esc(s)}</span>`;
+    `<span class="badge ${mauTrangThai(s)}">${esc(s)}</span>`;
   const btn = (text, action, id = "", style = "secondary small") =>
     `<button type="button" class="button ${style}" data-action="${esc(action)}" data-id="${esc(id)}">${esc(text)}</button>`;
   const notice = (text) => {
@@ -189,15 +197,15 @@
         items = items.filter(
           ([id]) => names[id] || specs.some((x) => x.id === id),
         );
-        return items.length
-          ? `<div class="nav-label">${label}</div>` +
-              items
-                .map(
-                  ([id, icon]) =>
-                    `<a class="nav-item ${id === section ? "active" : ""}" href="#${id}"><i>${icon}</i>${esc(names[id] || specs.find((x) => x.id === id)?.title)}</a>`,
-                )
-                .join("")
-          : "";
+        if (!items.length) return "";
+
+        const cacMuc = items.map(([id, icon]) => {
+          const tenMuc = names[id] || specs.find((x) => x.id === id)?.title;
+          const dangChon = id === section ? "active" : "";
+          return `<a class="nav-item ${dangChon}" href="#${id}"><i>${icon}</i>${esc(tenMuc)}</a>`;
+        });
+
+        return `<div class="nav-label">${label}</div>` + cacMuc.join("");
       })
       .join("");
   }
@@ -208,13 +216,68 @@
     extra = "",
     placeholder = "Tìm mã, tên hoặc thông tin…",
   } = {}) {
-    return `<form id="filters" class="toolbar"><input name="q" class="search" placeholder="${esc(placeholder)}" aria-label="Tìm kiếm" value="${esc(q)}" maxlength="150"/>${states ? `<select name="status" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${["Chờ sửa", "Đang sửa", "Hoàn thành", "Đã hủy"].map((s) => `<option ${s === status ? "selected" : ""}>${s}</option>`).join("")}</select>` : ""}${dates ? `<input name="from" aria-label="Từ ngày" type="date" value="${from}"/><input name="to" aria-label="Đến ngày" type="date" value="${to}"/>` : ""}<button class="button secondary">Lọc</button>${btn("Làm mới", "reset")}${add ? btn("+ Thêm mới", "create", "", "primary") : ""}${extra}</form>`;
+    const oTimKiem = `<input name="q" class="search" placeholder="${esc(placeholder)}" aria-label="Tìm kiếm" value="${esc(q)}" maxlength="150"/>`;
+
+    let oTrangThai = "";
+    if (states) {
+      const cacTrangThai = ["Chờ sửa", "Đang sửa", "Hoàn thành", "Đã hủy"]
+        .map((s) => `<option ${s === status ? "selected" : ""}>${s}</option>`)
+        .join("");
+      oTrangThai = `<select name="status" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${cacTrangThai}</select>`;
+    }
+
+    let oNgay = "";
+    if (dates) {
+      oNgay =
+        `<input name="from" aria-label="Từ ngày" type="date" value="${from}"/>` +
+        `<input name="to" aria-label="Đến ngày" type="date" value="${to}"/>`;
+    }
+
+    return [
+      `<form id="filters" class="toolbar">`,
+      oTimKiem,
+      oTrangThai,
+      oNgay,
+      `<button class="button secondary">Lọc</button>`,
+      btn("Làm mới", "reset"),
+      add ? btn("+ Thêm mới", "create", "", "primary") : "",
+      extra,
+      `</form>`,
+    ].join("");
   }
+
+  // columns: [[tên cột dữ liệu, tiêu đề, hàm hiển thị (không bắt buộc)], ...]
+  // actions: hàm (dòng, vị trí) → các nút thao tác của dòng đó (không bắt buộc).
   function taoBang(columns, rows, actions) {
-    return `<div class="table-wrap"><table><thead><tr>${columns.map((c) => `<th>${esc(c[1])}</th>`).join("")}${actions ? "<th>Thao tác</th>" : ""}</tr></thead><tbody>${rows.length ? rows.map((row, index) => `<tr>${columns.map(([key, label, render]) => `<td>${render ? render(row[key], row) : esc(row[key] ?? "—")}</td>`).join("")}${actions ? `<td><div class="row-actions">${actions(row, index)}</div></td>` : ""}</tr>`).join("") : `<tr><td colspan="${columns.length + (actions ? 1 : 0)}"><div class="empty">Chưa có dữ liệu phù hợp. Thử thay bộ lọc hoặc thêm bản ghi mới.</div></td></tr>`}</tbody></table></div>`;
+    const tieuDe =
+      columns.map((c) => `<th>${esc(c[1])}</th>`).join("") +
+      (actions ? "<th>Thao tác</th>" : "");
+
+    const taoDong = (row, index) => {
+      const cacO = columns
+        .map(([key, label, render]) => `<td>${render ? render(row[key], row) : esc(row[key] ?? "—")}</td>`)
+        .join("");
+      const oThaoTac = actions ? `<td><div class="row-actions">${actions(row, index)}</div></td>` : "";
+      return `<tr>${cacO}${oThaoTac}</tr>`;
+    };
+
+    const soCot = columns.length + (actions ? 1 : 0);
+    const dongTrong = `<tr><td colspan="${soCot}"><div class="empty">Chưa có dữ liệu phù hợp. Thử thay bộ lọc hoặc thêm bản ghi mới.</div></td></tr>`;
+    const thanBang = rows.length ? rows.map(taoDong).join("") : dongTrong;
+
+    return `<div class="table-wrap"><table><thead><tr>${tieuDe}</tr></thead><tbody>${thanBang}</tbody></table></div>`;
   }
+
   function taoPhanTrang(data) {
-    return `<div class="pager"><span class="count">${data.total ?? data.items.length} bản ghi</span><button class="button secondary small" data-action="prev" ${page <= 1 ? "disabled" : ""}>← Trước</button><span>Trang ${page} / ${data.totalPages || 1}</span><button class="button secondary small" data-action="next" ${page >= (data.totalPages || 1) ? "disabled" : ""}>Sau →</button></div>`;
+    const tongSoTrang = data.totalPages || 1;
+    return [
+      `<div class="pager">`,
+      `<span class="count">${data.total ?? data.items.length} bản ghi</span>`,
+      `<button class="button secondary small" data-action="prev" ${page <= 1 ? "disabled" : ""}>← Trước</button>`,
+      `<span>Trang ${page} / ${tongSoTrang}</span>`,
+      `<button class="button secondary small" data-action="next" ${page >= tongSoTrang ? "disabled" : ""}>Sau →</button>`,
+      `</div>`,
+    ].join("");
   }
   function layBoLoc() {
     return new URLSearchParams({ q, page, pageSize: 12, status, from, to });
@@ -230,7 +293,13 @@
       if (section === "dashboard") html = await hienTongQuan();
       else if (section === "reports") html = await hienBaoCao();
       else if (section === "profile")
-        html = `<div class="panel"><h2>Đổi mật khẩu</h2><p class="hint">Mật khẩu được cập nhật cho tài khoản dùng chung của nhóm trên cả website và ứng dụng quản lý.</p>${btn("Đổi mật khẩu", "password", "", "primary")}</div>`;
+        html = [
+          `<div class="panel">`,
+          `<h2>Đổi mật khẩu</h2>`,
+          `<p class="hint">Mật khẩu được cập nhật cho tài khoản dùng chung của nhóm trên cả website và ứng dụng quản lý.</p>`,
+          btn("Đổi mật khẩu", "password", "", "primary"),
+          `</div>`,
+        ].join("");
       else if (section === "myAttendance") {
         const d = await api("/api/workshop/my-attendance?" + layBoLoc());
         html = `<div class="panel"><h2>Tổng giờ thực tế: ${esc(d.totalHours)}</h2>${taoBoLoc({ dates: true })}${taoBang(
@@ -299,12 +368,13 @@
                   ? btn("Điều chỉnh tồn", "stock-adjust")
                   : "",
             }) +
-            taoBang(
-              cols,
-              d.items,
-              (r, i) =>
-                `${spec.fields.some((f) => !f.readOnly && !spec.keys.includes(f.name)) ? btn("Sửa", "edit", i) : ""}${section === "services" ? btn("Ảnh & nội dung", "content", r.MaDichVu) : ""}${btn("Xóa", "delete", i)}`,
-            );
+            taoBang(cols, d.items, (r, i) => {
+              // Chỉ hiện nút Sửa khi danh mục có trường sửa được ngoài cột khóa
+              const coTheSua = spec.fields.some((f) => !f.readOnly && !spec.keys.includes(f.name));
+              const nutSua = coTheSua ? btn("Sửa", "edit", i) : "";
+              const nutNoiDung = section === "services" ? btn("Ảnh & nội dung", "content", r.MaDichVu) : "";
+              return nutSua + nutNoiDung + btn("Xóa", "delete", i);
+            });
         }
         if (section === "jobs")
           html =
@@ -396,7 +466,8 @@
         if (section === "invoices")
           html =
             taoBoLoc({ dates: true }) +
-            `<p class="hint">Tổng tiền trong kết quả lọc: <b>${money(d.totalAmount)}</b>. Lập hóa đơn từ chi tiết phiếu sửa đã hoàn thành.</p>` +
+            `<p class="hint">Tổng tiền trong kết quả lọc: <b>${money(d.totalAmount)}</b>. ` +
+            `Lập hóa đơn từ chi tiết phiếu sửa đã hoàn thành.</p>` +
             taoBang(
               [
                 ["id", "Hóa đơn"],
@@ -432,25 +503,70 @@
     const d = await api("/api/workshop/dashboard");
     document.querySelector("#db-status").textContent = "● " + d.database;
     const count = (s) => d.jobs.find((x) => x.status === s)?.count || 0;
-    return `<div class="welcome"><div><h2>Mọi hoạt động, trong một nơi.</h2><p class="muted">Theo dõi cửa hàng và tiếp tục công việc hôm nay.</p></div>${canReceive ? btn("+ Tiếp nhận xe", "create-job", "", "primary") : ""}</div><div class="stats"><article class="stat dark"><label>XE ĐANG SỬA</label><strong>${count("Đang sửa")}</strong><small>Đang được thợ xử lý</small></article><article class="stat"><label>CHỜ SỬA</label><strong>${count("Chờ sửa")}</strong><small>Đã tiếp nhận tại cửa hàng</small></article><article class="stat"><label>${canReceive ? "LỊCH CHỜ XÁC NHẬN" : "ĐÃ HOÀN THÀNH"}</label><strong>${canReceive ? d.pendingBookings : count("Hoàn thành")}</strong><small>${canReceive ? "Yêu cầu từ website" : "Xe được giao phụ trách"}</small></article><article class="stat"><label>${canReceive ? "THU HÔM NAY" : "TỔNG PHIẾU"}</label><strong style="font-size:25px">${canReceive ? money(d.todayRevenue) : d.jobs.reduce((s, x) => s + x.count, 0)}</strong><small>${canReceive ? "Từ hóa đơn đã thanh toán" : "Trong phạm vi của bạn"}</small></article></div><section class="panel"><div class="panel-head"><h2>Trạng thái phiếu sửa</h2></div>${taoBang(
+
+    // Một ô số liệu trên đầu trang.
+    // kieu = "dark" cho ô nổi bật; style dùng khi số tiền dài cần chữ nhỏ hơn
+    function oSoLieu(nhan, giaTri, ghiChu, kieu = "", style = "") {
+      const lop = kieu ? `stat ${kieu}` : "stat";
+      const thuocTinhStyle = style ? ` style="${style}"` : "";
+      return `<article class="${lop}"><label>${nhan}</label><strong${thuocTinhStyle}>${giaTri}</strong><small>${ghiChu}</small></article>`;
+    }
+
+    // Thu ngân/quản lý thấy lịch chờ và doanh thu; thợ thấy số xe của mình
+    const oThu3 = canReceive
+      ? oSoLieu("LỊCH CHỜ XÁC NHẬN", d.pendingBookings, "Yêu cầu từ website")
+      : oSoLieu("ĐÃ HOÀN THÀNH", count("Hoàn thành"), "Xe được giao phụ trách");
+    const oThu4 = canReceive
+      ? oSoLieu("THU HÔM NAY", money(d.todayRevenue), "Từ hóa đơn đã thanh toán", "", "font-size:25px")
+      : oSoLieu("TỔNG PHIẾU", d.jobs.reduce((s, x) => s + x.count, 0), "Trong phạm vi của bạn", "", "font-size:25px");
+
+    const loiChao = [
+      `<div class="welcome">`,
+      `<div><h2>Mọi hoạt động, trong một nơi.</h2><p class="muted">Theo dõi cửa hàng và tiếp tục công việc hôm nay.</p></div>`,
+      canReceive ? btn("+ Tiếp nhận xe", "create-job", "", "primary") : "",
+      `</div>`,
+    ].join("");
+
+    const soLieu = [
+      `<div class="stats">`,
+      oSoLieu("XE ĐANG SỬA", count("Đang sửa"), "Đang được thợ xử lý", "dark"),
+      oSoLieu("CHỜ SỬA", count("Chờ sửa"), "Đã tiếp nhận tại cửa hàng"),
+      oThu3,
+      oThu4,
+      `</div>`,
+    ].join("");
+
+    const bangTrangThai = taoBang(
       [
         ["status", "Tiến độ", badge],
         ["count", "Số phiếu"],
       ],
       d.jobs,
-    )}</section>${
-      d.stockAlerts
-        ? `<section class="panel"><div class="panel-head"><h2>Phụ tùng cần chú ý</h2><a href="#parts">Đến kho →</a></div>${taoBang(
-            [
-              ["id", "Mã"],
-              ["name", "Phụ tùng"],
-              ["stock", "Tồn hiện tại"],
-              ["expiry", "Hạn sử dụng", date],
-            ],
-            d.stockAlerts,
-          )}<p class="hint">Tồn không quá 5 hoặc hết hạn trong 30 ngày tới.</p></section>`
-        : ""
-    }`;
+    );
+    const khungTrangThai = `<section class="panel"><div class="panel-head"><h2>Trạng thái phiếu sửa</h2></div>${bangTrangThai}</section>`;
+
+    // Chỉ quản lý mới có d.stockAlerts
+    let khungCanhBaoKho = "";
+    if (d.stockAlerts) {
+      const bangCanhBao = taoBang(
+        [
+          ["id", "Mã"],
+          ["name", "Phụ tùng"],
+          ["stock", "Tồn hiện tại"],
+          ["expiry", "Hạn sử dụng", date],
+        ],
+        d.stockAlerts,
+      );
+      khungCanhBaoKho = [
+        `<section class="panel">`,
+        `<div class="panel-head"><h2>Phụ tùng cần chú ý</h2><a href="#parts">Đến kho →</a></div>`,
+        bangCanhBao,
+        `<p class="hint">Tồn không quá 5 hoặc hết hạn trong 30 ngày tới.</p>`,
+        `</section>`,
+      ].join("");
+    }
+
+    return loiChao + soLieu + khungTrangThai + khungCanhBaoKho;
   }
   async function hienBaoCao() {
     if (!from && !to) {
@@ -459,20 +575,57 @@
     }
     const d = await api("/api/workshop/reports?" + layBoLoc());
     const max = Math.max(1, ...d.daily.map((x) => x.amount));
-    return (
-      taoBoLoc({
-        dates: true,
-        extra: `<a class="button primary" href="/api/workshop/reports/export?${new URLSearchParams({ from, to })}">Tải CSV</a>`,
-      }) +
-      `<div class="stats"><article class="stat dark"><label>DOANH THU ĐÃ THU</label><strong style="font-size:24px">${money(d.paid)}</strong><small>Theo ngày thanh toán</small></article><article class="stat"><label>GIÁ TRỊ NHẬP KHO</label><strong style="font-size:24px">${money(d.purchases)}</strong><small>Theo ngày nhập</small></article><article class="stat"><label>THU TRỪ NHẬP KHO</label><strong style="font-size:24px">${money(d.cashDifference)}</strong><small>Không phải lợi nhuận kế toán</small></article><article class="stat"><label>HOÀN THÀNH CHƯA THU</label><strong style="font-size:24px">${money(d.unpaid)}</strong><small>Tất cả thời gian</small></article></div><div class="grid-two"><section class="panel"><h2>Doanh thu theo ngày</h2><div class="chart-bars">${d.daily.length ? d.daily.map((x) => `<div class="chart-row"><span>${date(x.date)}</span><div class="chart-track"><span style="width:${Math.max(1, (x.amount / max) * 100)}%"></span></div><strong>${money(x.amount)}</strong></div>`).join("") : '<div class="empty">Chưa có khoản thu trong kỳ.</div>'}</div></section><section class="panel"><h2>Dịch vụ được sử dụng</h2>${taoBang(
-        [
-          ["name", "Dịch vụ"],
-          ["quantity", "Lượt"],
-          ["amount", "Doanh thu", money],
-        ],
-        d.services,
-      )}</section></div>`
+
+    const duongDanCsv = `/api/workshop/reports/export?${new URLSearchParams({ from, to })}`;
+    const boLoc = taoBoLoc({
+      dates: true,
+      extra: `<a class="button primary" href="${duongDanCsv}">Tải CSV</a>`,
+    });
+
+    const oSoLieu = (nhan, soTien, ghiChu, kieu = "stat") =>
+      `<article class="${kieu}"><label>${nhan}</label><strong style="font-size:24px">${money(soTien)}</strong><small>${ghiChu}</small></article>`;
+
+    const soLieu = [
+      `<div class="stats">`,
+      oSoLieu("DOANH THU ĐÃ THU", d.paid, "Theo ngày thanh toán", "stat dark"),
+      oSoLieu("GIÁ TRỊ NHẬP KHO", d.purchases, "Theo ngày nhập"),
+      oSoLieu("THU TRỪ NHẬP KHO", d.cashDifference, "Không phải lợi nhuận kế toán"),
+      oSoLieu("HOÀN THÀNH CHƯA THU", d.unpaid, "Tất cả thời gian"),
+      `</div>`,
+    ].join("");
+
+    // Biểu đồ cột ngang: độ dài mỗi cột tỉ lệ với ngày có doanh thu cao nhất
+    const taoCot = (x) => {
+      const doDai = Math.max(1, (x.amount / max) * 100);
+      return [
+        `<div class="chart-row">`,
+        `<span>${date(x.date)}</span>`,
+        `<div class="chart-track"><span style="width:${doDai}%"></span></div>`,
+        `<strong>${money(x.amount)}</strong>`,
+        `</div>`,
+      ].join("");
+    };
+    const bieuDo = d.daily.length
+      ? d.daily.map(taoCot).join("")
+      : '<div class="empty">Chưa có khoản thu trong kỳ.</div>';
+
+    const bangDichVu = taoBang(
+      [
+        ["name", "Dịch vụ"],
+        ["quantity", "Lượt"],
+        ["amount", "Doanh thu", money],
+      ],
+      d.services,
     );
+
+    const haiCot = [
+      `<div class="grid-two">`,
+      `<section class="panel"><h2>Doanh thu theo ngày</h2><div class="chart-bars">${bieuDo}</div></section>`,
+      `<section class="panel"><h2>Dịch vụ được sử dụng</h2>${bangDichVu}</section>`,
+      `</div>`,
+    ].join("");
+
+    return boLoc + soLieu + haiCot;
   }
   function layKhoa(spec, row) {
     return spec.keys
@@ -519,10 +672,14 @@
             v = row?.[f.name] ?? (f.type === "bool" ? true : "");
           if (f.type === "select" && !fixed)
             return selectField(f.name, f.label, await options(f.source, v));
-          if (f.type === "textarea")
-            return `<label class="field full"><span>${esc(f.label)}</span><textarea name="${f.name}" rows="3" maxlength="${f.max}" required>${esc(v)}</textarea></label>`;
-          if (f.type === "bool")
-            return `<label class="field"><span>${esc(f.label)}</span><input name="${f.name}" type="checkbox" ${v ? "checked" : ""}/></label>`;
+          if (f.type === "textarea") {
+            const oNhap = `<textarea name="${f.name}" rows="3" maxlength="${f.max}" required>${esc(v)}</textarea>`;
+            return `<label class="field full"><span>${esc(f.label)}</span>${oNhap}</label>`;
+          }
+          if (f.type === "bool") {
+            const oNhap = `<input name="${f.name}" type="checkbox" ${v ? "checked" : ""}/>`;
+            return `<label class="field"><span>${esc(f.label)}</span>${oNhap}</label>`;
+          }
           const type =
             f.type === "date"
               ? "date"
@@ -568,9 +725,13 @@
           );
         }),
     );
+    const ghiChuPhuTung =
+      section === "parts"
+        ? '<p class="hint">Phụ tùng mới có tồn 0. Dùng Phiếu nhập để tăng tồn hoặc Điều chỉnh tồn khi kiểm kê.</p>'
+        : "";
     moHopThoai(
       (row ? "Cập nhật · " : "Thêm · ") + spec.title,
-      `<div class="form-grid">${fields.join("")}</div>${section === "parts" ? '<p class="hint">Phụ tùng mới có tồn 0. Dùng Phiếu nhập để tăng tồn hoặc Điều chỉnh tồn khi kiểm kê.</p>' : ""}`,
+      `<div class="form-grid">${fields.join("")}</div>${ghiChuPhuTung}`,
       async (d) => {
         const payload = Object.fromEntries(d);
         for (const f of spec.fields)
@@ -586,15 +747,22 @@
       },
     );
   }
-  const xemTruocPhieuMarkup = `<div class="detail-actions"><button class="button secondary" type="button" id="job-preview-button">Kiểm tra tiền và phụ tùng</button></div>
+  // Nút "Kiểm tra tiền và phụ tùng" và vùng hiện kết quả xem trước, dùng trong form tiếp nhận.
+  const xemTruocPhieuMarkup =
+    `<div class="detail-actions"><button class="button secondary" type="button" id="job-preview-button">Kiểm tra tiền và phụ tùng</button></div>
     <div id="job-preview" aria-live="polite"></div>`;
+
+  // Dòng dịch vụ hợp lệ: đã chọn dịch vụ và số lượng là số nguyên 1–1000.
+  const dongDichVuHopLe = (line) =>
+    line.serviceId && Number.isInteger(line.quantity) && line.quantity >= 1 && line.quantity <= 1000;
 
   function ganXemTruocPhieu(layDuLieu) {
     const button = body.querySelector("#job-preview-button");
     const output = body.querySelector("#job-preview");
     button.addEventListener("click", async () => {
       const input = layDuLieu();
-      if (!input.vehicleType || !input.services.length || input.services.some((line) => !line.serviceId || !Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 1000)) {
+      const duDuLieu = input.vehicleType && input.services.length && input.services.every(dongDichVuHopLe);
+      if (!duDuLieu) {
         output.textContent = "Nhập mẫu xe, chọn dịch vụ và số lượng hợp lệ để kiểm tra.";
         return;
       }
@@ -635,9 +803,27 @@
         quantity: Number(row.querySelector("input").value),
       })),
     });
+    const cacTruong = [
+      field("customerName", "Họ tên khách hàng", "text", "", 'required maxlength="100"'),
+      field("phone", "Số điện thoại", "tel", "", 'required pattern="0[0-9]{8,10}" maxlength="11"'),
+      field("licensePlate", "Biển số xe", "text", "", 'required maxlength="20"'),
+      field("vehicleType", "Mẫu xe", "text", "", `required maxlength="50" ${modelHint}`),
+      field("brand", "Hãng xe", "text", "", `required maxlength="50" ${brandHint}`),
+      field("color", "Màu sắc", "text", "", 'required maxlength="30"'),
+      field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`),
+      selectField("mechanicId", "Phân công thợ (có thể bổ sung sau)", mechanics, ""),
+    ].join("");
+
+    const noiDungForm = [
+      `<div class="form-grid">${cacTruong}</div>`,
+      `<h3 style="margin-top:24px">Dịch vụ thực hiện</h3>`,
+      `<div id="job-services"><div class="line-items" id="lines"></div>${btn("+ Thêm dịch vụ", "line-add")}</div>`,
+      xemTruocPhieuMarkup,
+    ].join("");
+
     moHopThoai(
       "Tiếp nhận xe",
-      `<div class="form-grid">${field("customerName", "Họ tên khách hàng", "text", "", 'required maxlength="100"')}${field("phone", "Số điện thoại", "tel", "", 'required pattern="0[0-9]{8,10}" maxlength="11"')}${field("licensePlate", "Biển số xe", "text", "", 'required maxlength="20"')}${field("vehicleType", "Mẫu xe", "text", "", `required maxlength="50" ${modelHint}`)}${field("brand", "Hãng xe", "text", "", `required maxlength="50" ${brandHint}`)}${field("color", "Màu sắc", "text", "", 'required maxlength="30"')}${field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`)}${selectField("mechanicId", "Phân công thợ (có thể bổ sung sau)", mechanics, "")}</div><h3 style="margin-top:24px">Dịch vụ thực hiện</h3><div id="job-services"><div class="line-items" id="lines"></div>${btn("+ Thêm dịch vụ", "line-add")}</div>${xemTruocPhieuMarkup}`,
+      noiDungForm,
       async (d) => {
         const input = Object.fromEntries(d);
         Object.assign(input, layDuLieu());
@@ -660,42 +846,127 @@
       if (e.target.closest('[data-action="line-add"], [data-action="line-remove"]')) xoaXemTruoc();
     });
   }
+  // Thêm một dòng (chọn dịch vụ/phụ tùng + số lượng) vào form đang mở.
+  // Dùng chung cho phiếu nhập kho (Người 4) và tiếp nhận xe (Người 3).
   function themDong() {
-    const lines = document.querySelector("#lines");
-    // Mỗi form tự khai báo số lượng tối đa (phiếu nhập cho phép tới 100.000 như API).
-    const max = Number(lines.dataset.max) || 1000;
-    lines.insertAdjacentHTML(
-      "beforeend",
-      `<div class="line-row"><select required aria-label="Dịch vụ hoặc phụ tùng">${body.dataset.lineOptions}</select><input aria-label="Số lượng" type="number" value="1" min="1" max="${max}" step="1" required/><button type="button" data-action="line-remove" aria-label="Xóa dòng">×</button></div>`,
+    const danhSachDong = document.querySelector("#lines");
+    // Mỗi form tự khai báo số lượng tối đa qua data-max; mặc định 1.000
+    const soLuongToiDa = Number(danhSachDong.dataset.max) || 1000;
+
+    const dongMoi = `
+      <div class="line-row">
+        <select required aria-label="Dịch vụ hoặc phụ tùng">${body.dataset.lineOptions}</select>
+        <input aria-label="Số lượng" type="number" value="1" min="1" max="${soLuongToiDa}" step="1" required />
+        <button type="button" data-action="line-remove" aria-label="Xóa dòng">×</button>
+      </div>`;
+
+    danhSachDong.insertAdjacentHTML("beforeend", dongMoi);
+  }
+
+  // Người 4: form lập phiếu nhập kho nhiều dòng.
+  async function nhapKho() {
+    const luaChonPhuTung = await options("parts");
+
+    const noiDungForm = `
+      <div class="form-grid">
+        ${field("date", "Ngày nhập", "date", today(), `required max="${today()}"`)}
+        ${field("note", "Ghi chú", "text", "", 'maxlength="255"')}
+      </div>
+      <h3 style="margin-top:24px">Phụ tùng nhập</h3>
+      <div class="line-items" id="lines" data-max="100000"></div>
+      ${btn("+ Thêm phụ tùng", "line-add")}
+      <p class="hint">
+        Đơn giá lấy từ lô phụ tùng. Tạo mã lô mới khi giá nhập hoặc hạn sử dụng thay đổi.
+        Phiếu đã ghi sổ giữ nguyên; sai lệch được xử lý bằng điều chỉnh tồn có lý do.
+      </p>`;
+
+    async function luuPhieuNhap(duLieuForm) {
+      const phieuNhap = Object.fromEntries(duLieuForm);
+
+      // Mỗi dòng trên form thành một phụ tùng trong phiếu
+      phieuNhap.lines = [...body.querySelectorAll(".line-row")].map((dong) => ({
+        partId: dong.querySelector("select").value,
+        quantity: Number(dong.querySelector("input").value),
+      }));
+
+      const ketQua = await api("/api/workshop/stock/purchases", {
+        method: "POST",
+        body: JSON.stringify(phieuNhap),
+      });
+      return ketQua.message;
+    }
+
+    moHopThoai("Lập phiếu nhập kho", noiDungForm, luuPhieuNhap, "Lưu phiếu và cộng kho");
+
+    body.dataset.lineOptions = luaChonPhuTung;
+    themDong();
+  }
+
+  // Người 4: xem chi tiết một phiếu nhập kèm tổng tiền.
+  async function xemPhieuNhap(maPhieuNhap) {
+    const duLieu = await api("/api/workshop/stock/purchases/" + encodeURIComponent(maPhieuNhap));
+
+    let tongTienNhap = 0;
+    for (const dong of duLieu.lines) {
+      tongTienNhap += Number(dong.amount);
+    }
+
+    const bangChiTiet = taoBang(
+      [
+        ["partId", "Mã phụ tùng"],
+        ["name", "Tên"],
+        ["quantity", "Số lượng"],
+        ["price", "Đơn giá nhập", money],
+        ["amount", "Thành tiền", money],
+      ],
+      duLieu.lines,
+    );
+
+    moHopThoai(
+      "Chi tiết phiếu nhập " + maPhieuNhap,
+      bangChiTiet + `<p class="hint"><strong>Tổng nhập: ${money(tongTienNhap)}</strong></p>`,
     );
   }
-  async function nhapKho() {
-    const parts = await options("parts");
-    moHopThoai(
-      "Lập phiếu nhập kho",
-      `<div class="form-grid">${field("date", "Ngày nhập", "date", today(), `required max="${today()}"`)}${field("note", "Ghi chú", "text", "", 'maxlength="255"')}</div><h3 style="margin-top:24px">Phụ tùng nhập</h3><div class="line-items" id="lines" data-max="100000"></div>${btn("+ Thêm phụ tùng", "line-add")}<p class="hint">Đơn giá lấy từ lô phụ tùng. Tạo mã lô mới khi giá nhập hoặc hạn sử dụng thay đổi. Phiếu đã ghi sổ giữ nguyên; sai lệch được xử lý bằng điều chỉnh tồn có lý do.</p>`,
-      async (d) => {
-        const input = Object.fromEntries(d);
-        input.lines = [...body.querySelectorAll(".line-row")].map((r) => ({
-          partId: r.querySelector("select").value,
-          quantity: Number(r.querySelector("input").value),
-        }));
-        return (
-          await api("/api/workshop/stock/purchases", {
-            method: "POST",
-            body: JSON.stringify(input),
-          })
-        ).message;
-      },
-      "Lưu phiếu và cộng kho",
-    );
-    body.dataset.lineOptions = parts;
-    themDong();
+
+  // Người 4: kiểm kê, nhập số tồn đếm thực tế và lý do điều chỉnh.
+  async function kiemKeTon() {
+    const luaChonPhuTung = await options("parts");
+
+    const noiDungForm = `
+      <div class="form-grid">
+        ${selectField("partId", "Phụ tùng", luaChonPhuTung)}
+        ${field("stock", "Số tồn thực tế", "number", "", 'required min="0" max="1000000" step="1"')}
+        ${field("reason", "Lý do điều chỉnh", "text", "", 'required minlength="5" maxlength="255"')}
+      </div>`;
+
+    async function luuKiemKe(duLieuForm) {
+      const kiemKe = Object.fromEntries(duLieuForm);
+      kiemKe.stock = Number(kiemKe.stock);
+
+      const ketQua = await api("/api/workshop/stock/adjust", {
+        method: "POST",
+        body: JSON.stringify(kiemKe),
+      });
+      return ketQua.message;
+    }
+
+    moHopThoai("Điều chỉnh tồn sau kiểm kê", noiDungForm, luuKiemKe);
   }
   async function xemPhieu(id, invoiceOnly = false) {
     const d = await api("/api/workshop/jobs/" + encodeURIComponent(id)),
       j = d.job;
-    let html = `${invoiceOnly ? `<div class="invoice-heading"><span class="eyebrow">CỬA HÀNG SỬA XE · DỊCH VỤ SỬA XE</span><h2>HÓA ĐƠN THANH TOÁN</h2><p>${esc(d.invoice?.id || "")}</p></div>` : ""}<div class="detail-grid">${[
+    // Phần đầu hóa đơn (chỉ khi xem/in hóa đơn)
+    const dauHoaDon = invoiceOnly
+      ? [
+          `<div class="invoice-heading">`,
+          `<span class="eyebrow">CỬA HÀNG SỬA XE · DỊCH VỤ SỬA XE</span>`,
+          `<h2>HÓA ĐƠN THANH TOÁN</h2>`,
+          `<p>${esc(d.invoice?.id || "")}</p>`,
+          `</div>`,
+        ].join("")
+      : "";
+
+    const thongTinPhieu = [
       ["Mã phiếu", j.id],
       ["Khách hàng", j.customerName],
       ["Số điện thoại", j.phone],
@@ -704,7 +975,9 @@
       ["Hẹn trả", date(j.dueDate)],
     ]
       .map(([k, v]) => `<div><label>${k}</label><b>${esc(v)}</b></div>`)
-      .join("")}</div>${taoBang(
+      .join("");
+
+    const bangDichVu = taoBang(
       [
         ["serviceId", "Mã dịch vụ"],
         ["name", "Tên dịch vụ"],
@@ -712,40 +985,74 @@
         ["amount", "Thành tiền", money],
       ],
       d.lines,
-    )}<div class="invoice-total">Tổng cộng: <b>${money(j.total)}</b></div>`;
+    );
+
+    let html =
+      dauHoaDon +
+      `<div class="detail-grid">${thongTinPhieu}</div>` +
+      bangDichVu +
+      `<div class="invoice-total">Tổng cộng: <b>${money(j.total)}</b></div>`;
+
     if (invoiceOnly) {
-      html += `<p>Ngày thanh toán: <b>${date(d.invoice?.paidOn)}</b></p><p class="hint">Hóa đơn nội bộ phục vụ bài tập, không phải hóa đơn điện tử thuế.</p><div class="detail-actions no-print">${btn("In hóa đơn", "print", "", "primary")}</div>`;
+      html += [
+        `<p>Ngày thanh toán: <b>${date(d.invoice?.paidOn)}</b></p>`,
+        `<p class="hint">Hóa đơn nội bộ phục vụ bài tập, không phải hóa đơn điện tử thuế.</p>`,
+        `<div class="detail-actions no-print">${btn("In hóa đơn", "print", "", "primary")}</div>`,
+      ].join("");
       moHopThoai("Hóa đơn · " + (d.invoice?.id || j.id), html);
       return;
     }
-    html += `<h3>Phân công thợ</h3>${taoBang(
-      [
-        ["name", "Nhân viên"],
-        [
-          "start",
-          "Bắt đầu",
-          (v) => `${date(v)} ${esc(String(v).slice(11, 16))}`,
-        ],
-        [
-          "end",
-          "Dự kiến xong",
-          (v) => `${date(v)} ${esc(String(v).slice(11, 16))}`,
-        ],
-      ],
-      d.assignments,
+
+    // Bảng phân công: chỉ bỏ phân công được khi phiếu còn Chờ sửa
+    const ngayGio = (v) => `${date(v)} ${esc(String(v).slice(11, 16))}`;
+    const nutBoPhanCong =
       canReceive && j.status === "Chờ sửa"
         ? (r) => btn("Bỏ phân công", "unassign", j.id + "~" + r.employeeId)
-        : null,
-    )}<div class="detail-actions">${canReceive && ["Chờ sửa", "Đang sửa"].includes(j.status) ? btn("Phân công / đổi giờ", "assign", id) + btn("Sửa ngày hẹn", "due-date", id) : ""}${j.status === "Chờ sửa" ? btn("Bắt đầu sửa", "status", id + "~Đang sửa", "primary") : ""}${j.status === "Đang sửa" ? btn("Hoàn thành", "status", id + "~Hoàn thành", "primary") : ""}${canReceive && j.status === "Chờ sửa" ? btn("Hủy và hoàn kho", "status", id + "~Đã hủy", "danger") : ""}${canReceive && j.status === "Hoàn thành" && !j.paid ? btn("Lập hóa đơn / Thu tiền", "payment", id, "primary") : ""}${canReceive && j.paid ? btn("Xem / In hóa đơn", "print-invoice", id) : ""}</div>`;
+        : null;
+    const bangPhanCong = taoBang(
+      [
+        ["name", "Nhân viên"],
+        ["start", "Bắt đầu", ngayGio],
+        ["end", "Dự kiến xong", ngayGio],
+      ],
+      d.assignments,
+      nutBoPhanCong,
+    );
+
+    // Các nút thao tác theo trạng thái phiếu và quyền
+    const dangXuLy = ["Chờ sửa", "Đang sửa"].includes(j.status);
+    const cacNut = [
+      canReceive && dangXuLy ? btn("Phân công / đổi giờ", "assign", id) + btn("Sửa ngày hẹn", "due-date", id) : "",
+      j.status === "Chờ sửa" ? btn("Bắt đầu sửa", "status", id + "~Đang sửa", "primary") : "",
+      j.status === "Đang sửa" ? btn("Hoàn thành", "status", id + "~Hoàn thành", "primary") : "",
+      canReceive && j.status === "Chờ sửa" ? btn("Hủy và hoàn kho", "status", id + "~Đã hủy", "danger") : "",
+      canReceive && j.status === "Hoàn thành" && !j.paid ? btn("Lập hóa đơn / Thu tiền", "payment", id, "primary") : "",
+      canReceive && j.paid ? btn("Xem / In hóa đơn", "print-invoice", id) : "",
+    ].join("");
+
+    html += `<h3>Phân công thợ</h3>${bangPhanCong}<div class="detail-actions">${cacNut}</div>`;
     moHopThoai("Phiếu " + id + " · " + j.status, html);
   }
   async function nhanLich(id) {
     const booking = current.find((row) => row.id === id);
     if (!booking) throw new Error("Lịch hẹn không còn trong danh sách. Hãy tải lại.");
     const mechanics = await options("mechanics");
+    const cacTruong = [
+      field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`),
+      field("color", "Màu xe", "text", "", 'required maxlength="30"'),
+      selectField("mechanicId", "Thợ phụ trách", mechanics, ""),
+    ].join("");
+
+    const noiDungForm = [
+      `<p>Xe <b>${esc(booking.brand)} ${esc(booking.vehicleType)}</b> · ${esc(booking.licensePlate)}</p>`,
+      `<p>Dịch vụ <b>${esc(booking.service)}</b></p>`,
+      `<div class="form-grid">${cacTruong}</div>`,
+      xemTruocPhieuMarkup,
+    ].join("");
+
     moHopThoai(
       "Tiếp nhận lịch " + id,
-      `<p>Xe <b>${esc(booking.brand)} ${esc(booking.vehicleType)}</b> · ${esc(booking.licensePlate)}</p><p>Dịch vụ <b>${esc(booking.service)}</b></p><div class="form-grid">${field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`)}${field("color", "Màu xe", "text", "", 'required maxlength="30"')}${selectField("mechanicId", "Thợ phụ trách", mechanics, "")}</div>${xemTruocPhieuMarkup}`,
+      noiDungForm,
       async (d) =>
         (
           await api(
@@ -798,9 +1105,24 @@
     const d = await api(
       "/api/workshop/services/" + encodeURIComponent(id) + "/content",
     );
+    const ghiChuAnh = d.imageUrl ? "Đang dùng ảnh đã lưu." : "Chưa có ảnh riêng.";
+    const thanhCongCu = btn("B · Đậm", "bold") + btn("I · Nghiêng", "italic") + btn("• Danh sách", "list");
+
+    const noiDungForm = [
+      // Chọn ảnh → tải lên ngay, đường dẫn ảnh lưu vào ô ẩn imageUrl
+      `<label class="field"><span>Ảnh JPG/PNG/WebP, tối đa 2 MB</span><input type="file" id="service-image" accept="image/jpeg,image/png,image/webp"/></label>`,
+      `<input type="hidden" name="imageUrl" value="${esc(d.imageUrl)}"/>`,
+      `<div id="image-note" class="hint">${ghiChuAnh}</div>`,
+      // Editor: vùng contenteditable, khi lưu nội dung được lọc HTML rồi chép vào textarea ẩn
+      `<div class="editor-tools">${thanhCongCu}</div>`,
+      `<textarea id="mo-ta-html" name="description" hidden></textarea>`,
+      `<div contenteditable="true" role="textbox" aria-label="Nội dung dịch vụ" class="content-editor" id="rich-editor">${locNoiDung(d.description)}</div>`,
+      `<p class="hint">Nội dung hiển thị công khai ở trang dịch vụ. Chỉ giữ các định dạng văn bản an toàn.</p>`,
+    ].join("");
+
     moHopThoai(
       "Ảnh và nội dung dịch vụ",
-      `<label class="field"><span>Ảnh JPG/PNG/WebP, tối đa 2 MB</span><input type="file" id="service-image" accept="image/jpeg,image/png,image/webp"/></label><input type="hidden" name="imageUrl" value="${esc(d.imageUrl)}"/><div id="image-note" class="hint">${d.imageUrl ? "Đang dùng ảnh đã lưu." : "Chưa có ảnh riêng."}</div><div class="editor-tools">${btn("B · Đậm", "bold")}${btn("I · Nghiêng", "italic")}${btn("• Danh sách", "list")}</div><textarea id="mo-ta-html" name="description" hidden></textarea><div contenteditable="true" role="textbox" aria-label="Nội dung dịch vụ" class="content-editor" id="rich-editor">${locNoiDung(d.description)}</div><p class="hint">Nội dung hiển thị công khai ở trang dịch vụ. Chỉ giữ các định dạng văn bản an toàn.</p>`,
+      noiDungForm,
       async (f) =>
         (
           await api(
@@ -907,9 +1229,15 @@
     }
     if (action === "assign") {
       const choices = await options("mechanics");
+      const cacTruong = [
+        selectField("employeeId", "Thợ phụ trách", choices),
+        field("start", "Bắt đầu", "datetime-local", today() + "T08:00", "required"),
+        field("end", "Kết thúc dự kiến", "datetime-local", today() + "T17:00", "required"),
+      ].join("");
       return moHopThoai(
         "Phân công thợ",
-        `<div class="form-grid">${selectField("employeeId", "Thợ phụ trách", choices)}${field("start", "Bắt đầu", "datetime-local", today() + "T08:00", "required")}${field("end", "Kết thúc dự kiến", "datetime-local", today() + "T17:00", "required")}</div><p class="hint">Thợ chính tối đa 3 xe đang xử lý, thợ phụ tối đa 2 xe. Chọn lại cùng thợ để cập nhật thời gian.</p>`,
+        `<div class="form-grid">${cacTruong}</div>` +
+          `<p class="hint">Thợ chính tối đa 3 xe đang xử lý, thợ phụ tối đa 2 xe. Chọn lại cùng thợ để cập nhật thời gian.</p>`,
         async (d) =>
           (
             await api("/api/workshop/jobs/" + id + "/assign", {
@@ -950,9 +1278,17 @@
       );
     if (action === "payment") {
       const d = await api("/api/workshop/jobs/" + id);
+      // Ngày thu: từ ngày lập phiếu đến hôm nay
+      const ngayLapPhieu = String(d.job.createdOn).slice(0, 10);
+      const noiDungForm = [
+        `<p>Khách hàng: <b>${esc(d.job.customerName)}</b></p>`,
+        `<p>Tổng tiền cần thu: <b>${money(d.job.total)}</b></p>`,
+        field("paidOn", "Ngày thanh toán", "date", today(), `required max="${today()}" min="${ngayLapPhieu}"`),
+        `<p class="hint">Xác nhận khi đã nhận đủ tiền. Tổng tiền lấy từ chi tiết phiếu, không nhập lại thủ công.</p>`,
+      ].join("");
       return moHopThoai(
         "Thu tiền phiếu " + id,
-        `<p>Khách hàng: <b>${esc(d.job.customerName)}</b></p><p>Tổng tiền cần thu: <b>${money(d.job.total)}</b></p>${field("paidOn", "Ngày thanh toán", "date", today(), `required max="${today()}" min="${String(d.job.createdOn).slice(0, 10)}"`)}<p class="hint">Xác nhận khi đã nhận đủ tiền. Tổng tiền lấy từ chi tiết phiếu, không nhập lại thủ công.</p>`,
+        noiDungForm,
         async (f) =>
           (
             await api("/api/workshop/jobs/" + id + "/invoice", {
@@ -965,46 +1301,15 @@
     }
     if (action === "print-invoice") return xemPhieu(id, true);
     if (action === "print") return window.print();
-    if (action === "purchase-detail") {
-      const d = await api(
-        "/api/workshop/stock/purchases/" + encodeURIComponent(id),
-      );
-      const total = d.lines.reduce((sum, l) => sum + Number(l.amount), 0);
-      return moHopThoai(
-        "Chi tiết phiếu nhập " + id,
-        taoBang(
-          [
-            ["partId", "Mã phụ tùng"],
-            ["name", "Tên"],
-            ["quantity", "Số lượng"],
-            ["price", "Đơn giá nhập", money],
-            ["amount", "Thành tiền", money],
-          ],
-          d.lines,
-        ) + `<p class="hint"><strong>Tổng nhập: ${money(total)}</strong></p>`,
-      );
-    }
-    if (action === "stock-adjust") {
-      const choices = await options("parts");
-      return moHopThoai(
-        "Điều chỉnh tồn sau kiểm kê",
-        `<div class="form-grid">${selectField("partId", "Phụ tùng", choices)}${field("stock", "Số tồn thực tế", "number", "", 'required min="0" max="1000000" step="1"')}${field("reason", "Lý do điều chỉnh", "text", "", 'required minlength="5" maxlength="255"')}</div>`,
-        async (d) => {
-          const p = Object.fromEntries(d);
-          p.stock = Number(p.stock);
-          return (
-            await api("/api/workshop/stock/adjust", {
-              method: "POST",
-              body: JSON.stringify(p),
-            })
-          ).message;
-        },
-      );
-    }
+    if (action === "purchase-detail") return xemPhieuNhap(id);
+    if (action === "stock-adjust") return kiemKeTon();
     if (action === "password")
       return moHopThoai(
         "Đổi mật khẩu",
-        `<div class="form-grid">${field("oldPassword", "Mật khẩu hiện tại", "password", "", 'required autocomplete="current-password"')}${field("newPassword", "Mật khẩu mới", "password", "", 'required minlength="6" maxlength="100" autocomplete="new-password"')}</div>`,
+        `<div class="form-grid">` +
+          field("oldPassword", "Mật khẩu hiện tại", "password", "", 'required autocomplete="current-password"') +
+          field("newPassword", "Mật khẩu mới", "password", "", 'required minlength="6" maxlength="100" autocomplete="new-password"') +
+          `</div>`,
         async (d) =>
           (
             await api("/api/auth/password", {

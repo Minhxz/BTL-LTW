@@ -1,12 +1,19 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Globalization;
-using System.Security.Claims;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using QLyCuaHangSuaXe.LopDungChung;
-using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Models;
-public sealed record YeuCauNhanLich([property: JsonPropertyName("dueDate")] DateTime NgayHenTra, [Required, StringLength(30)][property: JsonPropertyName("color")] string MauSac, [StringLength(10)][property: JsonPropertyName("mechanicId")] string? MaTho);
+
+// Người 2: nhân viên nhận lịch hẹn online và chuyển thành phiếu tiếp nhận.
+public sealed class YeuCauNhanLich
+{
+    [JsonPropertyName("dueDate")]
+    public DateTime NgayHenTra { get; set; }
+
+    [Required(ErrorMessage = "Vui lòng nhập màu xe."), StringLength(30)]
+    [JsonPropertyName("color")]
+    public string MauSac { get; set; } = "";
+
+    [StringLength(10)]
+    [JsonPropertyName("mechanicId")]
+    public string? MaTho { get; set; }
+}
