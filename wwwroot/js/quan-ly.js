@@ -570,18 +570,19 @@
     themDong();
   }
   function themDong() {
-    document
-      .querySelector("#lines")
-      .insertAdjacentHTML(
-        "beforeend",
-        `<div class="line-row"><select required aria-label="Dịch vụ hoặc phụ tùng">${body.dataset.lineOptions}</select><input aria-label="Số lượng" type="number" value="1" min="1" max="1000" step="1" required/><button type="button" data-action="line-remove" aria-label="Xóa dòng">×</button></div>`,
-      );
+    const lines = document.querySelector("#lines");
+    // Mỗi form tự khai báo số lượng tối đa (phiếu nhập cho phép tới 100.000 như API).
+    const max = Number(lines.dataset.max) || 1000;
+    lines.insertAdjacentHTML(
+      "beforeend",
+      `<div class="line-row"><select required aria-label="Dịch vụ hoặc phụ tùng">${body.dataset.lineOptions}</select><input aria-label="Số lượng" type="number" value="1" min="1" max="${max}" step="1" required/><button type="button" data-action="line-remove" aria-label="Xóa dòng">×</button></div>`,
+    );
   }
   async function nhapKho() {
     const parts = await options("parts");
     moHopThoai(
       "Lập phiếu nhập kho",
-      `<div class="form-grid">${field("date", "Ngày nhập", "date", today(), `required max="${today()}"`)}${field("note", "Ghi chú", "text", "", 'maxlength="255"')}</div><h3 style="margin-top:24px">Phụ tùng nhập</h3><div class="line-items" id="lines"></div>${btn("+ Thêm phụ tùng", "line-add")}<p class="hint">Đơn giá lấy từ lô phụ tùng. Tạo mã lô mới khi giá nhập hoặc hạn sử dụng thay đổi. Phiếu đã ghi sổ giữ nguyên; sai lệch được xử lý bằng điều chỉnh tồn có lý do.</p>`,
+      `<div class="form-grid">${field("date", "Ngày nhập", "date", today(), `required max="${today()}"`)}${field("note", "Ghi chú", "text", "", 'maxlength="255"')}</div><h3 style="margin-top:24px">Phụ tùng nhập</h3><div class="line-items" id="lines" data-max="100000"></div>${btn("+ Thêm phụ tùng", "line-add")}<p class="hint">Đơn giá lấy từ lô phụ tùng. Tạo mã lô mới khi giá nhập hoặc hạn sử dụng thay đổi. Phiếu đã ghi sổ giữ nguyên; sai lệch được xử lý bằng điều chỉnh tồn có lý do.</p>`,
       async (d) => {
         const input = Object.fromEntries(d);
         input.lines = [...body.querySelectorAll(".line-row")].map((r) => ({
@@ -867,7 +868,10 @@
     if (action === "print-invoice") return xemPhieu(id, true);
     if (action === "print") return window.print();
     if (action === "purchase-detail") {
-      const d = await api("/api/workshop/stock/purchases/" + id);
+      const d = await api(
+        "/api/workshop/stock/purchases/" + encodeURIComponent(id),
+      );
+      const total = d.lines.reduce((sum, l) => sum + Number(l.amount), 0);
       return moHopThoai(
         "Chi tiết phiếu nhập " + id,
         taoBang(
@@ -875,10 +879,11 @@
             ["partId", "Mã phụ tùng"],
             ["name", "Tên"],
             ["quantity", "Số lượng"],
+            ["price", "Đơn giá nhập", money],
             ["amount", "Thành tiền", money],
           ],
           d.lines,
-        ),
+        ) + `<p class="hint"><strong>Tổng nhập: ${money(total)}</strong></p>`,
       );
     }
     if (action === "stock-adjust") {
