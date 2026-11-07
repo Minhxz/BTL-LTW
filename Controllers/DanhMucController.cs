@@ -1,226 +1,520 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using System.Globalization;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QLyCuaHangSuaXe.LopDungChung;
 using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Controllers;
+
+// Người 1 tổng hợp: bộ thêm/sửa/xóa dùng chung cho mọi danh mục khai báo trong DinhNghiaDanhMuc.
+// Mỗi người sửa hàm Kiểm tra... thuộc phần mình; Them/Sua/Xoa/Luu là phần dùng chung.
 [ApiController, Authorize, Route("api/catalog")]
 public sealed class DanhMucController(XuLyDuLieu db) : ControllerBase
 {
-    private CauHinhDanhMuc CauHinh(string kind)
+    private const string TrangThaiDangXuLy = "(N'Chờ sửa', N'Đang sửa')";
+
+    // Cập nhật lại tổng tiền điều chỉnh của mọi chức vụ sau khi đổi khoản thưởng/phạt.
+    private const string SqlTinhLaiTienDieuChinh = """
+        UPDATE c
+        SET TienDieuChinh = COALESCE((
+            SELECT SUM(k.SoTien)
+            FROM ChucVuDieuChinh d
+            JOIN KhoanDieuChinh k ON k.MaKhoanDieuChinh = d.MaKhoanDieuChinh
+            WHERE d.MaChucVu = c.MaChucVu), 0)
+        FROM ChucVu c
+        """;
+
+    // ===== Đọc danh mục =====
+
+    // Danh sách danh mục mà tài khoản hiện tại được dùng (giao diện dựa vào đây để vẽ form).
+    [HttpGet("schema")]
+    public IActionResult DinhNghia()
     {
-        if (!DinhNghiaDanhMuc.TatCa.TryGetValue(kind, out var spec))
-            throw new KeyNotFoundException("Không có danh mục này.");
-        if (!spec.VaiTro.Split(',').Any(User.IsInRole))
-            throw new UnauthorizedAccessException("Bạn không có quyền quản lý danh mục này.");
-        return spec;
+        var danhSach = DinhNghiaDanhMuc.TatCa
+            .Where(x => DuocDung(x.Value))
+            .Select(x => new { id = x.Key, title = x.Value.TieuDe, keys = x.Value.Khoa, fields = x.Value.CacTruong });
+
+        return Ok(danhSach);
     }
 
-    [HttpGet("schema")]
-    public IActionResult DinhNghia() => Ok(DinhNghiaDanhMuc.TatCa.Where(x => x.Value.VaiTro.Split(',').Any(User.IsInRole)).Select(x => new { id = x.Key, title = x.Value.TieuDe, keys = x.Value.Khoa, fields = x.Value.CacTruong }));
     [HttpGet("{kind}")]
     public async Task<IActionResult> DanhSach(string kind, string? q = null, int page = 1, int pageSize = 12)
     {
-        var spec = CauHinh(kind);
+        CauHinhDanhMuc cauHinh = CauHinh(kind);
         PhanTrang.KiemTra(page, pageSize, q);
-        var fields = spec.CacTruong.Where(f => f.Kieu != "password").ToList();
-        var columns = string.Join(',', fields.Select(f => $"[{f.Ten}]"));
-        var terms = fields.Where(f => f.Kieu is "text" or "code" or "phone").Select(f => $"[{f.Ten}] LIKE @q");
-        var where = terms.Any() ? " WHERE (" + string.Join(" OR ", terms) + ")" : "";
-        var args = new
+
+        // Không bao giờ trả cột mật khẩu
+        List<TruongDanhMuc> cacTruong = cauHinh.CacTruong.Where(f => f.Kieu != "password").ToList();
+        string cacCot = string.Join(", ", cacTruong.Select(f => $"[{f.Ten}]"));
+        string cotSapXep = string.Join(", ", cauHinh.Khoa.Select(k => $"[{k}]"));
+
+        // Tìm kiếm trên các cột chữ, mã, số điện thoại
+        List<string> dieuKienTim = cacTruong
+            .Where(f => f.Kieu is "text" or "code" or "phone")
+            .Select(f => $"[{f.Ten}] Like @q")
+            .ToList();
+
+        string dieuKienLoc = dieuKienTim.Count > 0 ? " Where (" + string.Join(" Or ", dieuKienTim) + ")" : "";
+
+        var thamSo = new
         {
             q = "%" + (q ?? "").Trim() + "%",
             skip = (page - 1) * pageSize,
             size = pageSize
         };
-        var total = await db.DocGiaTriAsync<int>($"SELECT COUNT(*) FROM [{spec.Bang}]" + where, args);
-        var items = await db.DocBangAsync($"SELECT {columns} FROM [{spec.Bang}] {where} ORDER BY {string.Join(',', spec.Khoa.Select(k => $"[{k}]"))} OFFSET @skip ROWS FETCH NEXT @size ROWS ONLY", args);
-        return Ok(new { items, total, page, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) });
+
+        string sqlDem = $"Select Count(*) From [{cauHinh.Bang}]" + dieuKienLoc;
+
+        string sqlDanhSach = $"Select {cacCot} From [{cauHinh.Bang}]" + dieuKienLoc +
+            $" Order By {cotSapXep} " +
+            "Offset @skip Rows Fetch Next @size Rows Only";
+
+        int tongSoDong = await db.DocGiaTriAsync<int>(sqlDem, thamSo);
+        List<Dictionary<string, object?>> danhSachDong = await db.DocBangAsync(sqlDanhSach, thamSo);
+
+        return Ok(new
+        {
+            items = danhSachDong,
+            total = tongSoDong,
+            page,
+            totalPages = Math.Max(1, (int)Math.Ceiling(tongSoDong / (double)pageSize))
+        });
     }
 
+    // Danh sách cho ô chọn: chỉ trả mã và nhãn, không trả thông tin nhân sự hoặc lương.
     [HttpGet("options/{kind}")]
     public async Task<IActionResult> DanhSachChon(string kind)
     {
-        // Danh sách chọn chỉ trả mã và nhãn, không trả thông tin nhân sự hoặc lương.
-        var sql = kind switch
+        bool laQuanLy = User.IsInRole("Manager");
+        bool laThuNgan = User.IsInRole("Cashier");
+
+        string sql = kind switch
         {
-            "customers" when User.IsInRole("Manager") || User.IsInRole("Cashier") => "SELECT MaKhachHang id,TenKhachHang+N' · '+SoDienThoai label FROM KhachHang ORDER BY TenKhachHang",
-            "services" => "SELECT MaDichVu id,TenDichVu label FROM DichVu WHERE TrangThai=1 ORDER BY TenDichVu",
-            "parts" => "SELECT MaPhuTung id,TenPhuTung+N' · tồn '+CAST(SoLuongTon AS nvarchar(15)) label FROM PhuTung WHERE TrangThai=1 ORDER BY TenPhuTung",
-            "suppliers" when User.IsInRole("Manager") => "SELECT MaNhaCungCap id,TenNhaCungCap label FROM NhaCungCap ORDER BY TenNhaCungCap",
-            "employees" when User.IsInRole("Manager") => "SELECT MaNhanVien id,HoTen label FROM NhanVien WHERE TrangThai=1 ORDER BY HoTen",
-            "mechanics" => "SELECT n.MaNhanVien id,n.HoTen label FROM NhanVien n JOIN ChucVu c ON c.MaChucVu=n.MaChucVu WHERE n.TrangThai=1 AND c.TenChucVu LIKE N'Thợ%' ORDER BY n.HoTen",
-            "roles" when User.IsInRole("Manager") => "SELECT MaChucVu id,TenChucVu label FROM ChucVu ORDER BY MaChucVu",
-            "adjustments" when User.IsInRole("Manager") => "SELECT MaKhoanDieuChinh id,TenKhoanDieuChinh label FROM KhoanDieuChinh ORDER BY MaKhoanDieuChinh",
-            "shifts" => "SELECT MaCaLam id,MaCaLam+N' · '+CONVERT(nvarchar(5),ThoiGianBatDau)+N'–'+CONVERT(nvarchar(5),ThoiGianKetThuc) label FROM CaLam ORDER BY ThoiGianBatDau",
-            _ => throw new UnauthorizedAccessException("Danh sách không khả dụng với tài khoản này.")};
+            "customers" when laQuanLy || laThuNgan =>
+                "Select MaKhachHang As id, TenKhachHang + N' · ' + SoDienThoai As label From KhachHang Order By TenKhachHang",
+            "services" =>
+                "Select MaDichVu As id, TenDichVu As label From DichVu Where TrangThai = 1 Order By TenDichVu",
+            "parts" =>
+                "Select MaPhuTung As id, TenPhuTung + N' · tồn ' + Cast(SoLuongTon As nvarchar(15)) As label From PhuTung Where TrangThai = 1 Order By TenPhuTung",
+            "suppliers" when laQuanLy =>
+                "Select MaNhaCungCap As id, TenNhaCungCap As label From NhaCungCap Order By TenNhaCungCap",
+            "employees" when laQuanLy =>
+                "Select MaNhanVien As id, HoTen As label From NhanVien Where TrangThai = 1 Order By HoTen",
+            "mechanics" =>
+                "Select n.MaNhanVien As id, n.HoTen As label From NhanVien n Join ChucVu c On c.MaChucVu = n.MaChucVu " +
+                "Where n.TrangThai = 1 And c.TenChucVu Like N'Thợ%' Order By n.HoTen",
+            "roles" when laQuanLy =>
+                "Select MaChucVu As id, TenChucVu As label From ChucVu Order By MaChucVu",
+            "adjustments" when laQuanLy =>
+                "Select MaKhoanDieuChinh As id, TenKhoanDieuChinh As label From KhoanDieuChinh Order By MaKhoanDieuChinh",
+            "shifts" =>
+                "Select MaCaLam As id, MaCaLam + N' · ' + Convert(nvarchar(5), ThoiGianBatDau) + N'–' + Convert(nvarchar(5), ThoiGianKetThuc) As label " +
+                "From CaLam Order By ThoiGianBatDau",
+            _ => throw new UnauthorizedAccessException("Danh sách không khả dụng với tài khoản này.")
+        };
+
         return Ok(await db.DocBangAsync(sql));
     }
 
-    [HttpPost("{kind}")]
-    public Task<IActionResult> Them(string kind, Dictionary<string, JsonElement> input) => Luu(kind, null, input);
-    [HttpPut("{kind}/{key}")]
-    public Task<IActionResult> Sua(string kind, string key, Dictionary<string, JsonElement> input) => Luu(kind, key, input);
-    private async Task<IActionResult> Luu(string kind, string? key, Dictionary<string, JsonElement> input)
-    {
-        var spec = CauHinh(kind);
-        var data = DocDuLieuNhap(spec, input, key == null);
-        await db.TrongGiaoDichAsync(async s =>
-        {
-            var keys = DocKhoa(spec, key, data);
-            var where = DieuKienKhoa(spec);
-            var old = key == null ? null : (await s.DocBangAsync($"SELECT * FROM [{spec.Bang}] WITH(UPDLOCK,HOLDLOCK) WHERE {where}", keys)).SingleOrDefault();
-            if (key != null && old == null)
-                throw new KeyNotFoundException("Bản ghi không còn tồn tại.");
-            if (kind == "parts")
-                await KiemTraPhuTung(s, old, data);
-            if (kind == "vehicles" && old != null && await s.DocGiaTriAsync<int>("SELECT COUNT(*) FROM PhieuTiepNhan WHERE MaXe=@id", new { id = old.Chuoi("MaXe") }) > 0)
-                throw new InvalidOperationException("Xe đã có phiếu tiếp nhận. Không sửa thông tin lịch sử; tạo lượt xe mới khi tiếp nhận lần tiếp theo.");
-            if (kind == "serviceParts")
-                await KiemTraDinhMuc(s, old, data);
-            if (kind == "employees")
-                await KiemTraNhanVien(s, old, data);
-            if (kind == "roles")
-                await KiemTraChucVu(s, old, data);
-            if (kind == "shifts")
-                await KiemTraCaLam(s, old, data);
-            if (kind == "attendance")
-                await KiemTraChamCong(s, old, data);
-            if (key == null)
-                await s.ThucThiAsync($"INSERT [{spec.Bang}] ({string.Join(',', data.Keys.Select(k => $"[{k}]"))}) VALUES ({string.Join(',', data.Keys.Select(k => "@" + k))})", data);
-            else
-            {
-                foreach (var k in spec.Khoa)
-                    data.Remove(k);
-                var set = string.Join(',', data.Keys.Select(k => $"[{k}]=@{k}"));
-                foreach (var pair in keys)
-                    data.Add(pair.Key, pair.Value);
-                await s.ThucThiAsync($"UPDATE [{spec.Bang}] SET {set} WHERE {where}", data);
-            }
+    // ===== Thêm / sửa / xóa =====
 
-            if (kind is "adjustments" or "roleAdjustments")
-                await s.ThucThiAsync("UPDATE c SET TienDieuChinh=COALESCE((SELECT SUM(k.SoTien) FROM ChucVuDieuChinh d JOIN KhoanDieuChinh k ON d.MaKhoanDieuChinh=k.MaKhoanDieuChinh WHERE d.MaChucVu=c.MaChucVu),0) FROM ChucVu c");
-            return true;
-        });
-        return StatusCode(key == null ? 201 : 200, new { message = "Đã lưu dữ liệu." });
+    [HttpPost("{kind}")]
+    public Task<IActionResult> Them(string kind, Dictionary<string, JsonElement> input)
+    {
+        return Luu(kind, null, input);
     }
 
-    private async Task KiemTraNhanVien(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
+    [HttpPut("{kind}/{key}")]
+    public Task<IActionResult> Sua(string kind, string key, Dictionary<string, JsonElement> input)
     {
-        if (old == null && !data.ContainsKey("MatKhau"))
-            throw new ArgumentException("Nhập mật khẩu từ 6 ký tự cho nhân viên mới.");
-        var newRole = await s.DocGiaTriAsync<string>("SELECT TenChucVu FROM ChucVu WHERE MaChucVu=@id", new { id = data["MaChucVu"] });
-        if (newRole == null)
-            throw new ArgumentException("Chọn chức vụ hợp lệ.");
-        if (old == null)
-            return;
-        var oldRole = await s.DocGiaTriAsync<string>("SELECT TenChucVu FROM ChucVu WHERE MaChucVu=@id", new { id = old.Chuoi("MaChucVu") });
-        if (!(bool)data["TrangThai"]! || PhanQuyenNguoiDung.XacDinhVaiTro(newRole) != PhanQuyenNguoiDung.XacDinhVaiTro(oldRole ?? ""))
+        return Luu(kind, key, input);
+    }
+
+    // key = null: thêm mới; key = mã bản ghi (khóa nhiều cột nối bằng ~): sửa.
+    private async Task<IActionResult> Luu(string kind, string? key, Dictionary<string, JsonElement> input)
+    {
+        CauHinhDanhMuc cauHinh = CauHinh(kind);
+        bool themMoi = key == null;
+        Dictionary<string, object?> data = DocDuLieuNhap(cauHinh, input, themMoi);
+
+        await db.TrongGiaoDichAsync(async s =>
         {
-            if (old.Chuoi("MaNhanVien") == PhanQuyenNguoiDung.MaNhanVien(User))
-                throw new InvalidOperationException("Không thể tự khóa hoặc đổi nhóm quyền tài khoản đang đăng nhập.");
-            if (await s.DocGiaTriAsync<int>("SELECT COUNT(*) FROM ChiTietPhanCong c JOIN PhieuTiepNhan p ON p.MaXe=c.MaXe WHERE c.MaNhanVien=@id AND p.TrangThai IN(N'Chờ sửa',N'Đang sửa')", new { id = old.Chuoi("MaNhanVien") }) > 0)
-                throw new InvalidOperationException("Nhân viên còn xe đang xử lý. Hoàn tất hoặc chuyển phân công trước.");
-        }
+            Dictionary<string, object?> giaTriKhoa = DocKhoa(cauHinh, key, data);
+            string dieuKienKhoa = DieuKienKhoa(cauHinh);
+
+            // 1. Khi sửa: đọc và khóa bản ghi cũ
+            Dictionary<string, object?>? old = null;
+
+            if (!themMoi)
+            {
+                string sqlBanGhiCu = $"Select * From [{cauHinh.Bang}] With (UpdLock, HoldLock) Where {dieuKienKhoa}";
+                old = (await s.DocBangAsync(sqlBanGhiCu, giaTriKhoa)).SingleOrDefault()
+                    ?? throw new KeyNotFoundException("Bản ghi không còn tồn tại.");
+            }
+
+            // 2. Kiểm tra nghiệp vụ riêng của từng danh mục
+            await KiemTraTheoDanhMuc(s, kind, old, data);
+
+            // 3. Ghi xuống CSDL
+            if (themMoi)
+            {
+                string cacCot = string.Join(", ", data.Keys.Select(k => $"[{k}]"));
+                string cacThamSo = string.Join(", ", data.Keys.Select(k => "@" + k));
+
+                await s.ThucThiAsync($"Insert Into [{cauHinh.Bang}] ({cacCot}) Values ({cacThamSo})", data);
+            }
+            else
+            {
+                // Không cập nhật cột khóa; giá trị khóa đưa vào tham số @k0, @k1...
+                foreach (string cotKhoa in cauHinh.Khoa)
+                {
+                    data.Remove(cotKhoa);
+                }
+
+                string cacCotCapNhat = string.Join(", ", data.Keys.Select(k => $"[{k}] = @{k}"));
+
+                foreach (KeyValuePair<string, object?> cap in giaTriKhoa)
+                {
+                    data.Add(cap.Key, cap.Value);
+                }
+
+                await s.ThucThiAsync($"Update [{cauHinh.Bang}] Set {cacCotCapNhat} Where {dieuKienKhoa}", data);
+            }
+
+            // 4. Khoản thưởng/phạt thay đổi thì tính lại tiền điều chỉnh của chức vụ
+            if (kind is "adjustments" or "roleAdjustments")
+            {
+                await s.ThucThiAsync(SqlTinhLaiTienDieuChinh);
+            }
+
+            return true;
+        });
+
+        return StatusCode(themMoi ? 201 : 200, new { message = "Đã lưu dữ liệu." });
     }
 
     [HttpDelete("{kind}/{key}")]
     public async Task<IActionResult> Xoa(string kind, string key)
     {
-        var spec = CauHinh(kind);
+        CauHinhDanhMuc cauHinh = CauHinh(kind);
+
         await db.TrongGiaoDichAsync(async s =>
         {
-            var keys = DocKhoa(spec, key, []);
-            var where = DieuKienKhoa(spec);
+            Dictionary<string, object?> giaTriKhoa = DocKhoa(cauHinh, key, []);
+
             if (kind == "employees" && key == PhanQuyenNguoiDung.MaNhanVien(User))
-                throw new InvalidOperationException("Không thể xóa tài khoản đang đăng nhập.");
-            if (kind == "serviceParts")
             {
-                if (await s.DocGiaTriAsync<int>("SELECT COUNT(*) FROM ChiTietPhieuTiepNhan d JOIN PhieuTiepNhan p ON p.MaPhieuTiepNhan=d.MaPhieuTiepNhan WHERE d.MaDichVu=@id AND p.TrangThai IN(N'Chờ sửa',N'Đang sửa')", new { id = key.Split('~')[0] }) > 0)
-                    throw new InvalidOperationException("Không xóa định mức đang được dùng cho xe chưa hoàn thành.");
+                throw new InvalidOperationException("Không thể xóa tài khoản đang đăng nhập.");
             }
 
+            if (kind == "serviceParts")
+            {
+                string maDichVu = key.Split('~')[0];
+
+                if (await DemPhieuDangXuLyCuaDichVu(s, maDichVu) > 0)
+                {
+                    throw new InvalidOperationException("Không xóa định mức đang được dùng cho xe chưa hoàn thành.");
+                }
+            }
+
+            // Dịch vụ có nội dung web (mô tả, ảnh) thì xóa phần đó trước
             if (kind == "services")
-                await s.ThucThiAsync("DELETE WebDichVu WHERE MaDichVu=@k0", keys);
-            if (await s.ThucThiAsync($"DELETE [{spec.Bang}] WHERE {where}", keys) == 0)
+            {
+                await s.ThucThiAsync("Delete WebDichVu Where MaDichVu = @k0", giaTriKhoa);
+            }
+
+            // Bản ghi đang được dùng ở bảng khác sẽ bị khóa ngoại chặn lại (báo lỗi 409)
+            int soDongXoa = await s.ThucThiAsync($"Delete [{cauHinh.Bang}] Where {DieuKienKhoa(cauHinh)}", giaTriKhoa);
+
+            if (soDongXoa == 0)
+            {
                 throw new KeyNotFoundException("Không tìm thấy bản ghi.");
+            }
+
             if (kind is "adjustments" or "roleAdjustments")
-                await s.ThucThiAsync("UPDATE c SET TienDieuChinh=COALESCE((SELECT SUM(k.SoTien) FROM ChucVuDieuChinh d JOIN KhoanDieuChinh k ON k.MaKhoanDieuChinh=d.MaKhoanDieuChinh WHERE d.MaChucVu=c.MaChucVu),0) FROM ChucVu c");
+            {
+                await s.ThucThiAsync(SqlTinhLaiTienDieuChinh);
+            }
+
             return true;
         });
+
         return Ok(new { message = "Đã xóa bản ghi." });
     }
 
-    private static Dictionary<string, object?> DocDuLieuNhap(CauHinhDanhMuc spec, Dictionary<string, JsonElement> input, bool create)
+    // ===== Hàm dùng chung =====
+
+    private bool DuocDung(CauHinhDanhMuc cauHinh)
     {
-        var result = new Dictionary<string, object?>();
-        foreach (var f in spec.CacTruong.Where(f => !f.ChiDoc && (create || !spec.Khoa.Contains(f.Ten))))
-        {
-            var raw = input.GetValueOrDefault(f.Ten);
-            var text = raw.ValueKind == JsonValueKind.Undefined ? "" : raw.ToString().Trim();
-            if (f.KhongBatBuoc && text.Length == 0)
-                continue;
-            if (text.Length == 0)
-                throw new ArgumentException($"Vui lòng nhập {f.Nhan.ToLowerInvariant()}.");
-            if (f.Kieu is "money" or "factor" or "signedMoney" or "positiveInt" or "int" or "hours")
-            {
-                if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var number) || Math.Abs(number) > 100000000000m)
-                    throw new ArgumentException($"{f.Nhan} không hợp lệ.");
-                if (f.Kieu is "money" or "factor" or "positiveInt" && number <= 0 || f.Kieu == "hours" && (number < 0 || number > 24) || f.Kieu == "factor" && number >= 100 || f.Kieu == "signedMoney" && number == 0)
-                    throw new ArgumentException($"{f.Nhan} ngoài khoảng cho phép.");
-                if (f.Kieu is "money" or "signedMoney" or "positiveInt" or "int" && number != decimal.Truncate(number))
-                    throw new ArgumentException($"{f.Nhan} phải là số nguyên.");
-                if (f.Kieu == "positiveInt" && number > 10000)
-                    throw new ArgumentException("Số lượng tối đa 10.000.");
-                result[f.Ten] = number;
-            }
-            else if (f.Kieu == "bool")
-                result[f.Ten] = text.Equals("true", StringComparison.OrdinalIgnoreCase) || text == "1";
-            else if (f.Kieu == "date")
-            {
-                if (!DateTime.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
-                    throw new ArgumentException("Ngày không hợp lệ.");
-                result[f.Ten] = date;
-            }
-            else if (f.Kieu == "time")
-            {
-                if (!TimeSpan.TryParse(text, CultureInfo.InvariantCulture, out var time) || time < TimeSpan.Zero || time >= TimeSpan.FromDays(1))
-                    throw new ArgumentException("Giờ không hợp lệ.");
-                result[f.Ten] = time;
-            }
-            else
-            {
-                if (text.Length > f.DoDaiToiDa)
-                    throw new ArgumentException($"{f.Nhan} tối đa {f.DoDaiToiDa} ký tự.");
-                if (f.Kieu == "code" && !Regex.IsMatch(text, @"^[A-Za-z0-9_-]{1,10}$"))
-                    throw new ArgumentException("Mã chỉ gồm chữ không dấu, số, gạch dưới hoặc gạch ngang.");
-                if (f.Kieu == "phone" && !Regex.IsMatch(text, @"^0[0-9]{8,10}$"))
-                    throw new ArgumentException("Số điện thoại gồm 9–11 chữ số, bắt đầu bằng 0.");
-                if (f.Kieu == "password")
-                {
-                    if (text.Length < 6)
-                        throw new ArgumentException("Mật khẩu tối thiểu 6 ký tự.");
-                    text = XuLyDuLieu.BamMatKhau(text);
-                }
-
-                result[f.Ten] = text;
-            }
-        }
-
-        return result;
+        return cauHinh.VaiTro.Split(',').Any(User.IsInRole);
     }
 
-    private static string DieuKienKhoa(CauHinhDanhMuc spec) => string.Join(" AND ", spec.Khoa.Select((k, i) => $"[{k}]=@k{i}"));
-    private static Dictionary<string, object?> DocKhoa(CauHinhDanhMuc spec, string? key, Dictionary<string, object?> data)
+    private CauHinhDanhMuc CauHinh(string kind)
     {
-        var parts = key?.Split('~');
-        if (parts != null && parts.Length != spec.Khoa.Length)
+        if (!DinhNghiaDanhMuc.TatCa.TryGetValue(kind, out CauHinhDanhMuc? cauHinh))
+        {
+            throw new KeyNotFoundException("Không có danh mục này.");
+        }
+
+        if (!DuocDung(cauHinh))
+        {
+            throw new UnauthorizedAccessException("Bạn không có quyền quản lý danh mục này.");
+        }
+
+        return cauHinh;
+    }
+
+    // Ví dụ khóa 2 cột: "[MaDichVu] = @k0 And [MaPhuTung] = @k1".
+    private static string DieuKienKhoa(CauHinhDanhMuc cauHinh)
+    {
+        return string.Join(" And ", cauHinh.Khoa.Select((cot, i) => $"[{cot}] = @k{i}"));
+    }
+
+    // Giá trị khóa: lấy từ key trên URL (sửa/xóa) hoặc từ dữ liệu nhập (thêm mới).
+    private static Dictionary<string, object?> DocKhoa(CauHinhDanhMuc cauHinh, string? key, Dictionary<string, object?> data)
+    {
+        string[]? cacPhanKhoa = key?.Split('~');
+
+        if (cacPhanKhoa != null && cacPhanKhoa.Length != cauHinh.Khoa.Length)
+        {
             throw new ArgumentException("Mã bản ghi không hợp lệ.");
-        return spec.Khoa.Select((k, i) => new KeyValuePair<string, object?>("k" + i, parts == null ? data[k] : parts[i])).ToDictionary();
+        }
+
+        Dictionary<string, object?> giaTriKhoa = new Dictionary<string, object?>();
+
+        for (int i = 0; i < cauHinh.Khoa.Length; i++)
+        {
+            giaTriKhoa["k" + i] = cacPhanKhoa == null ? data[cauHinh.Khoa[i]] : cacPhanKhoa[i];
+        }
+
+        return giaTriKhoa;
+    }
+
+    // Đọc và kiểm tra dữ liệu nhập theo kiểu của từng trường. Khi sửa thì bỏ qua cột khóa.
+    private static Dictionary<string, object?> DocDuLieuNhap(CauHinhDanhMuc cauHinh, Dictionary<string, JsonElement> input, bool themMoi)
+    {
+        Dictionary<string, object?> ketQua = new Dictionary<string, object?>();
+
+        IEnumerable<TruongDanhMuc> truongCanDoc = cauHinh.CacTruong
+            .Where(f => !f.ChiDoc && (themMoi || !cauHinh.Khoa.Contains(f.Ten)));
+
+        foreach (TruongDanhMuc truong in truongCanDoc)
+        {
+            JsonElement giaTriGoc = input.GetValueOrDefault(truong.Ten);
+            string chuoi = giaTriGoc.ValueKind == JsonValueKind.Undefined ? "" : giaTriGoc.ToString().Trim();
+
+            if (chuoi.Length == 0)
+            {
+                if (truong.KhongBatBuoc)
+                {
+                    continue;
+                }
+
+                throw new ArgumentException($"Vui lòng nhập {truong.Nhan.ToLowerInvariant()}.");
+            }
+
+            ketQua[truong.Ten] = truong.Kieu switch
+            {
+                "money" or "factor" or "signedMoney" or "positiveInt" or "int" or "hours" => DocSo(truong, chuoi),
+                "bool" => chuoi.Equals("true", StringComparison.OrdinalIgnoreCase) || chuoi == "1",
+                "date" => DocNgay(chuoi),
+                "time" => DocGio(chuoi),
+                _ => DocChuoi(truong, chuoi)
+            };
+        }
+
+        return ketQua;
+    }
+
+    private static decimal DocSo(TruongDanhMuc truong, string chuoi)
+    {
+        if (!decimal.TryParse(chuoi, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal so) || Math.Abs(so) > 100000000000m)
+        {
+            throw new ArgumentException($"{truong.Nhan} không hợp lệ.");
+        }
+
+        bool ngoaiKhoang = truong.Kieu switch
+        {
+            "money" or "positiveInt" => so <= 0,
+            "factor" => so <= 0 || so >= 100,
+            "hours" => so < 0 || so > 24,
+            "signedMoney" => so == 0,
+            _ => false
+        };
+
+        if (ngoaiKhoang)
+        {
+            throw new ArgumentException($"{truong.Nhan} ngoài khoảng cho phép.");
+        }
+
+        bool phaiLaSoNguyen = truong.Kieu is "money" or "signedMoney" or "positiveInt" or "int";
+
+        if (phaiLaSoNguyen && so != decimal.Truncate(so))
+        {
+            throw new ArgumentException($"{truong.Nhan} phải là số nguyên.");
+        }
+
+        if (truong.Kieu == "positiveInt" && so > 10000)
+        {
+            throw new ArgumentException("Số lượng tối đa 10.000.");
+        }
+
+        return so;
+    }
+
+    private static DateTime DocNgay(string chuoi)
+    {
+        if (!DateTime.TryParseExact(chuoi, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime ngay))
+        {
+            throw new ArgumentException("Ngày không hợp lệ.");
+        }
+
+        return ngay;
+    }
+
+    private static TimeSpan DocGio(string chuoi)
+    {
+        if (!TimeSpan.TryParse(chuoi, CultureInfo.InvariantCulture, out TimeSpan gio) || gio < TimeSpan.Zero || gio >= TimeSpan.FromDays(1))
+        {
+            throw new ArgumentException("Giờ không hợp lệ.");
+        }
+
+        return gio;
+    }
+
+    // Chữ, mã, số điện thoại, mật khẩu (mật khẩu được băm trước khi lưu).
+    private static string DocChuoi(TruongDanhMuc truong, string chuoi)
+    {
+        if (chuoi.Length > truong.DoDaiToiDa)
+        {
+            throw new ArgumentException($"{truong.Nhan} tối đa {truong.DoDaiToiDa} ký tự.");
+        }
+
+        if (truong.Kieu == "code" && !Regex.IsMatch(chuoi, @"^[A-Za-z0-9_-]{1,10}$"))
+        {
+            throw new ArgumentException("Mã chỉ gồm chữ không dấu, số, gạch dưới hoặc gạch ngang.");
+        }
+
+        if (truong.Kieu == "phone" && !Regex.IsMatch(chuoi, @"^0[0-9]{8,10}$"))
+        {
+            throw new ArgumentException("Số điện thoại gồm 9–11 chữ số, bắt đầu bằng 0.");
+        }
+
+        if (truong.Kieu == "password")
+        {
+            if (chuoi.Length < 6)
+            {
+                throw new ArgumentException("Mật khẩu tối thiểu 6 ký tự.");
+            }
+
+            return XuLyDuLieu.BamMatKhau(chuoi);
+        }
+
+        return chuoi;
+    }
+
+    private static async Task<int> DemPhieuDangXuLyCuaDichVu(PhienGiaoDich s, string maDichVu)
+    {
+        string sqlDem = "Select Count(*) " +
+            "From ChiTietPhieuTiepNhan d Join PhieuTiepNhan p On p.MaPhieuTiepNhan = d.MaPhieuTiepNhan " +
+            "Where d.MaDichVu = @id And p.TrangThai In " + TrangThaiDangXuLy;
+
+        return await s.DocGiaTriAsync<int>(sqlDem, new { id = maDichVu });
+    }
+
+    // ===== Kiểm tra nghiệp vụ theo từng danh mục =====
+
+    private async Task KiemTraTheoDanhMuc(PhienGiaoDich s, string kind, Dictionary<string, object?>? old, Dictionary<string, object?> data)
+    {
+        switch (kind)
+        {
+            case "parts":
+                await KiemTraPhuTung(s, old, data);
+                break;
+            case "vehicles":
+                await KiemTraXe(s, old);
+                break;
+            case "serviceParts":
+                await KiemTraDinhMuc(s, old, data);
+                break;
+            case "employees":
+                await KiemTraNhanVien(s, old, data);
+                break;
+            case "roles":
+                await KiemTraChucVu(s, old, data);
+                break;
+            case "shifts":
+                await KiemTraCaLam(s, old, data);
+                break;
+            case "attendance":
+                await KiemTraChamCong(s, old, data);
+                break;
+        }
+    }
+
+    // Người 2: xe đã có phiếu tiếp nhận thì không sửa, để giữ đúng lịch sử.
+    private static async Task KiemTraXe(PhienGiaoDich s, Dictionary<string, object?>? old)
+    {
+        if (old == null)
+        {
+            return;
+        }
+
+        int soPhieu = await s.DocGiaTriAsync<int>("Select Count(*) From PhieuTiepNhan Where MaXe = @id", new { id = old.Chuoi("MaXe") });
+
+        if (soPhieu > 0)
+        {
+            throw new InvalidOperationException("Xe đã có phiếu tiếp nhận. Không sửa thông tin lịch sử; tạo lượt xe mới khi tiếp nhận lần tiếp theo.");
+        }
+    }
+
+    // Người 1: nhân viên mới phải có mật khẩu; không tự khóa/đổi quyền chính mình; còn xe đang sửa thì không khóa/đổi quyền.
+    private async Task KiemTraNhanVien(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
+    {
+        if (old == null && !data.ContainsKey("MatKhau"))
+        {
+            throw new ArgumentException("Nhập mật khẩu từ 6 ký tự cho nhân viên mới.");
+        }
+
+        string sqlTenChucVu = "Select TenChucVu From ChucVu Where MaChucVu = @id";
+        string? chucVuMoi = await s.DocGiaTriAsync<string>(sqlTenChucVu, new { id = data["MaChucVu"] });
+
+        if (chucVuMoi == null)
+        {
+            throw new ArgumentException("Chọn chức vụ hợp lệ.");
+        }
+
+        if (old == null)
+        {
+            return;
+        }
+
+        string? chucVuCu = await s.DocGiaTriAsync<string>(sqlTenChucVu, new { id = old.Chuoi("MaChucVu") });
+        bool khoaTaiKhoan = !(bool)data["TrangThai"]!;
+        bool doiNhomQuyen = PhanQuyenNguoiDung.XacDinhVaiTro(chucVuMoi) != PhanQuyenNguoiDung.XacDinhVaiTro(chucVuCu ?? "");
+
+        if (!khoaTaiKhoan && !doiNhomQuyen)
+        {
+            return;
+        }
+
+        string maNhanVien = old.Chuoi("MaNhanVien");
+
+        if (maNhanVien == PhanQuyenNguoiDung.MaNhanVien(User))
+        {
+            throw new InvalidOperationException("Không thể tự khóa hoặc đổi nhóm quyền tài khoản đang đăng nhập.");
+        }
+
+        string sqlXeDangSua = "Select Count(*) " +
+            "From ChiTietPhanCong c Join PhieuTiepNhan p On p.MaXe = c.MaXe " +
+            "Where c.MaNhanVien = @id And p.TrangThai In " + TrangThaiDangXuLy;
+
+        if (await s.DocGiaTriAsync<int>(sqlXeDangSua, new { id = maNhanVien }) > 0)
+        {
+            throw new InvalidOperationException("Nhân viên còn xe đang xử lý. Hoàn tất hoặc chuyển phân công trước.");
+        }
     }
 
     // Người 4: kiểm tra khi thêm/sửa lô phụ tùng.
@@ -305,43 +599,109 @@ public sealed class DanhMucController(XuLyDuLieu db) : ControllerBase
         return daSuDung == 1;
     }
 
-    private async Task KiemTraDinhMuc(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
+    // Người 3: không đổi định mức khi dịch vụ đang có xe chờ sửa/đang sửa.
+    private static async Task KiemTraDinhMuc(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
     {
-        var service = old?.Chuoi("MaDichVu") ?? Convert.ToString(data["MaDichVu"]);
-        if (await s.DocGiaTriAsync<int>("SELECT COUNT(*) FROM ChiTietPhieuTiepNhan d JOIN PhieuTiepNhan p ON p.MaPhieuTiepNhan=d.MaPhieuTiepNhan WHERE d.MaDichVu=@id AND p.TrangThai IN(N'Chờ sửa',N'Đang sửa')", new { id = service }) > 0)
+        string maDichVu = old?.Chuoi("MaDichVu") ?? Convert.ToString(data["MaDichVu"]) ?? "";
+
+        if (await DemPhieuDangXuLyCuaDichVu(s, maDichVu) > 0)
+        {
             throw new InvalidOperationException("Dịch vụ có xe đang sửa/chờ sửa. Chỉ thay đổi định mức khi các phiếu này kết thúc.");
+        }
     }
 
-    private async Task KiemTraChucVu(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
+    // Người 1: chức vụ mới có tiền điều chỉnh 0; chức vụ đang có người thì không đổi nhóm quyền qua tên.
+    private static async Task KiemTraChucVu(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
     {
         if (old == null)
+        {
             data["TienDieuChinh"] = 0;
-        if (old != null && PhanQuyenNguoiDung.XacDinhVaiTro(old.Chuoi("TenChucVu")) != PhanQuyenNguoiDung.XacDinhVaiTro((string)data["TenChucVu"]!) && await s.DocGiaTriAsync<int>("SELECT COUNT(*) FROM NhanVien WHERE MaChucVu=@id", new { id = old.Chuoi("MaChucVu") }) > 0)
+            return;
+        }
+
+        string vaiTroCu = PhanQuyenNguoiDung.XacDinhVaiTro(old.Chuoi("TenChucVu"));
+        string vaiTroMoi = PhanQuyenNguoiDung.XacDinhVaiTro((string)data["TenChucVu"]!);
+
+        if (vaiTroCu == vaiTroMoi)
+        {
+            return;
+        }
+
+        int soNhanVien = await s.DocGiaTriAsync<int>("Select Count(*) From NhanVien Where MaChucVu = @id", new { id = old.Chuoi("MaChucVu") });
+
+        if (soNhanVien > 0)
+        {
             throw new InvalidOperationException("Chức vụ đang được nhân viên sử dụng; không đổi nhóm quyền bằng cách đổi tên chức vụ.");
+        }
     }
 
-    private async Task KiemTraCaLam(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
+    // Người 1: giờ kết thúc sau giờ bắt đầu; tự tính số giờ ca; ca đã chấm công thì không sửa.
+    private static async Task KiemTraCaLam(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
     {
-        var start = (TimeSpan)data["ThoiGianBatDau"]!;
-        var end = (TimeSpan)data["ThoiGianKetThuc"]!;
-        if (end <= start)
+        TimeSpan gioBatDau = (TimeSpan)data["ThoiGianBatDau"]!;
+        TimeSpan gioKetThuc = (TimeSpan)data["ThoiGianKetThuc"]!;
+
+        if (gioKetThuc <= gioBatDau)
+        {
             throw new ArgumentException("Giờ kết thúc phải sau giờ bắt đầu.");
-        data["ThoiGianCaLam"] = (decimal)(end - start).TotalHours;
-        if (old != null && await s.DocGiaTriAsync<int>("SELECT COUNT(*) FROM ChiTietCaLam WHERE MaCaLam=@id", new { id = old.Chuoi("MaCaLam") }) > 0)
+        }
+
+        data["ThoiGianCaLam"] = (decimal)(gioKetThuc - gioBatDau).TotalHours;
+
+        if (old == null)
+        {
+            return;
+        }
+
+        int soLanChamCong = await s.DocGiaTriAsync<int>("Select Count(*) From ChiTietCaLam Where MaCaLam = @id", new { id = old.Chuoi("MaCaLam") });
+
+        if (soLanChamCong > 0)
+        {
             throw new InvalidOperationException("Ca đã được chấm công. Hãy tạo ca mới để giữ đúng lịch sử.");
+        }
     }
 
-    private async Task KiemTraChamCong(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
+    // Người 1: không chấm công tương lai, không vượt thời lượng ca, không trùng giờ với ca khác cùng ngày.
+    private static async Task KiemTraChamCong(PhienGiaoDich s, Dictionary<string, object?>? old, Dictionary<string, object?> data)
     {
-        var merged = old == null ? data : new Dictionary<string, object?>(old);
-        foreach (var pair in data)
-            merged[pair.Key] = pair.Value;
-        if ((DateTime)merged["NgayLam"]! > XuLyDuLieu.HomNay)
+        // Khi sửa, cột khóa (nhân viên, ca, ngày) không có trong data nên ghép với bản ghi cũ
+        Dictionary<string, object?> banGhi = new Dictionary<string, object?>(old ?? new Dictionary<string, object?>());
+
+        foreach (KeyValuePair<string, object?> cap in data)
+        {
+            banGhi[cap.Key] = cap.Value;
+        }
+
+        if ((DateTime)banGhi["NgayLam"]! > XuLyDuLieu.HomNay)
+        {
             throw new ArgumentException("Không chấm công cho ngày tương lai.");
-        var hours = await s.DocGiaTriAsync<decimal>("SELECT ThoiGianCaLam FROM CaLam WHERE MaCaLam=@id", new { id = merged["MaCaLam"] });
-        if ((decimal)data["TongThoiGianLamThucTe"]! > hours)
+        }
+
+        decimal soGioCa = await s.DocGiaTriAsync<decimal>("Select ThoiGianCaLam From CaLam Where MaCaLam = @id", new { id = banGhi["MaCaLam"] });
+
+        if ((decimal)data["TongThoiGianLamThucTe"]! > soGioCa)
+        {
             throw new ArgumentException("Số giờ thực tế không được vượt thời lượng ca.");
-        if (await s.DocGiaTriAsync<int>("SELECT COUNT(*) FROM ChiTietCaLam a JOIN CaLam c ON c.MaCaLam=a.MaCaLam JOIN CaLam n ON n.MaCaLam=@shift WHERE a.MaNhanVien=@id AND a.NgayLam=@date AND a.MaCaLam<>@shift AND c.ThoiGianBatDau<n.ThoiGianKetThuc AND n.ThoiGianBatDau<c.ThoiGianKetThuc", new { id = merged["MaNhanVien"], date = merged["NgayLam"], shift = merged["MaCaLam"] }) > 0)
+        }
+
+        // Hai ca giao nhau khi ca này bắt đầu trước lúc ca kia kết thúc và ngược lại
+        string sqlCaTrungGio = "Select Count(*) " +
+            "From ChiTietCaLam a " +
+            "Join CaLam c On c.MaCaLam = a.MaCaLam " +
+            "Join CaLam n On n.MaCaLam = @shift " +
+            "Where a.MaNhanVien = @id And a.NgayLam = @date And a.MaCaLam <> @shift " +
+            "And c.ThoiGianBatDau < n.ThoiGianKetThuc And n.ThoiGianBatDau < c.ThoiGianKetThuc";
+
+        int soCaTrung = await s.DocGiaTriAsync<int>(sqlCaTrungGio, new
+        {
+            id = banGhi["MaNhanVien"],
+            date = banGhi["NgayLam"],
+            shift = banGhi["MaCaLam"]
+        });
+
+        if (soCaTrung > 0)
+        {
             throw new InvalidOperationException("Nhân viên đã chấm công ca trùng giờ.");
+        }
     }
 }

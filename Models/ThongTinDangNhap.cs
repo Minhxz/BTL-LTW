@@ -1,12 +1,16 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Globalization;
-using System.Security.Claims;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using QLyCuaHangSuaXe.LopDungChung;
-using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Models;
-public sealed record ThongTinDangNhap([Required, StringLength(50)][property: JsonPropertyName("username")] string TenDangNhap, [Required, StringLength(200)][property: JsonPropertyName("password")] string MatKhau);
+
+// Người 1: dữ liệu form đăng nhập.
+public sealed class ThongTinDangNhap
+{
+    [Required(ErrorMessage = "Vui lòng nhập tên đăng nhập."), StringLength(50)]
+    [JsonPropertyName("username")]
+    public string TenDangNhap { get; set; } = "";
+
+    [Required(ErrorMessage = "Vui lòng nhập mật khẩu."), StringLength(200)]
+    [JsonPropertyName("password")]
+    public string MatKhau { get; set; } = "";
+}
