@@ -20,7 +20,7 @@ CSDL mặc định là **QuanLySuaXe** trên `(localdb)\MSSQLLocalDB`. Dùng tr�
 - Tiếp nhận: khách hàng/xe, nhiều dịch vụ, kiểm tra định mức và trừ kho trong transaction, phân công thợ, cập nhật tiến độ, ngày hẹn trả.
 - Dịch vụ: CRUD, định mức phụ tùng, ảnh JPG/PNG/WebP, editor mô tả có lọc HTML.
 - Kho: nhà cung cấp, phụ tùng/lô hàng, phiếu nhập nhiều dòng, điều chỉnh tồn và lịch sử đổi giá.
-- Nhân sự: tài khoản, chức vụ, khoản điều chỉnh, ca làm, chấm công, công cá nhân, đổi mật khẩu.
+- Nhân sự: 3 mục Nhân viên & chức vụ, Ca làm & chấm công, Thưởng / phạt; các chức năng chi tiết nằm trong từng mục.
 - Hóa đơn: chỉ lập cho phiếu hoàn thành, tính từ giá chốt, chống thu trùng, xem/in, thống kê ngày và xuất CSV.
 
 ## Cấu trúc mã nguồn
@@ -45,10 +45,20 @@ Không chạy lại script cài mới trên dữ liệu nhóm. `database/QuanLyS
 
 Bài dùng MVC/Razor; phân trang, bộ lọc và AJAX; CRUD danh mục; cookie đăng nhập và session nháp; validation/annotation; API GET/POST/PUT/DELETE; upload ảnh; editor mô tả. Các ca kiểm tra thủ công nằm ngay dưới phần việc của từng người. Đã bỏ thư mục tests và scripts theo yêu cầu nhóm.
 
-Kiểm tra bản sau khi sắp xếp mã: build 0 lỗi/0 cảnh báo; JavaScript qua kiểm tra cú pháp; 24 yêu cầu HTTP đạt trên CSDL riêng, gồm các controller mới, nhập kho, tiếp nhận/trừ kho, hủy/hoàn kho, editor và chặn lập hóa đơn sai trạng thái. Chưa kiểm tra trực quan toàn bộ màn hình. Các lần ghép sau cần kiểm tra lại theo phân công; không dùng số liệu thật để demo thay đổi dữ liệu.
+Kiểm tra ngày 09/11/2026 trên CSDL riêng: bản dựng 0 lỗi/0 cảnh báo; cả 7 file JavaScript hợp lệ; 191 yêu cầu HTTP đạt. Bao gồm thêm/sửa/xóa danh mục, mã tự động và tạo đồng thời, phân quyền, ca làm/chấm công, nhập kho/kiểm kê/lịch sử giá, tiếp nhận/trừ kho/hủy/hoàn kho, phân công/tiến độ, hóa đơn/chống thu trùng, báo cáo/CSV, đặt lịch/tra cứu/hủy/tiếp nhận, nháp theo phiên, đổi mật khẩu, tải ảnh và lọc HTML.
+
+Đã chạy thử trên trình duyệt: 20 mục quản lý, các biểu mẫu thêm mới và ô mã tự động, thêm/lọc nhà cung cấp, danh sách/chi tiết dịch vụ, lưu/khôi phục/xóa nháp, tra cứu, đăng nhập và menu điện thoại. Không ghi nhận lỗi JavaScript trong lượt chạy này.
+
+## Quy ước mã nguồn và mã bản ghi
+
+Tên biến và hàm của dự án dùng tiếng Việt không dấu theo cách đặt tên của BTL-LTTQ. Mỗi mức thụt lề dùng 4 dấu cách; cấu hình trong `.editorconfig`. Các tên bắt buộc của ASP.NET, trình duyệt và thư viện giữ theo hệ thống.
+
+Mã khách hàng, xe, dịch vụ, nhà cung cấp, phụ tùng, nhân viên, chức vụ, khoản điều chỉnh và ca làm hiện ngay khi mở biểu mẫu thêm mới, ví dụ `NV00000001`, `NCC0000001`; ô mã chỉ hiển thị, không nhập tay. Máy chủ dành mã riêng cho từng biểu mẫu và giữ đúng mã khi lưu. Đóng biểu mẫu chưa lưu có thể để trống một số thứ tự. Phiếu tiếp nhận, phiếu nhập, hóa đơn, lịch hẹn và lịch sử điều chỉnh cũng được tự sinh mã. Các liên kết giữa bảng được chọn từ danh sách có sẵn.
+
+`database/DuLieuMauBoSung.sql` bổ sung 12 bản ghi vào từng bảng trong 24 bảng nghiệp vụ và bảng web, tổng cộng 288 bản ghi. Các bản ghi dùng mã có phần `MAU` để nhận biết. Chạy trên CSDL QuanLySuaXe đã có các bảng mở rộng của web; chạy lại không thêm trùng, không xóa hay thay thế dữ liệu hiện có. Tài khoản mẫu bổ sung là `maumoi01` đến `maumoi12`, mật khẩu `123456`.
+
+Đã kiểm tra thêm 91 yêu cầu cho mã hiện sẵn: cả 9 danh mục có mã riêng, mã giữa các biểu mẫu không trùng, mã lưu trùng với mã hiển thị, chặn vé cấp mã sai hoặc dùng nhầm tài khoản, và 8 lần lưu đồng thời.
 
 ## Quy ước nghiệp vụ
 
 Giá dịch vụ là giá trọn gói, giống bài BTL-LTTQ. Trừ phụ tùng khi tiếp nhận, không trừ khi đặt lịch online. Hủy phiếu Chờ sửa do web tạo sẽ hoàn theo bản chốt phụ tùng; phiếu tạo từ ứng dụng khác cần hủy trong ứng dụng gốc. Thợ chính nhận tối đa 3 xe, thợ phụ 2 xe. Thu–nhập kho là chênh lệch dòng tiền, không phải lợi nhuận. Mật khẩu SHA-256 giữ tương thích ứng dụng BTL-LTTQ; muốn đổi thuật toán cần cập nhật đồng thời cả hai ứng dụng.
-
-Mã bản 5 bảng cũ đã được lưu ngoài project tại `../BTL-LTW/BanLuuTru/MaCuTruocKhiVietHoa.zip`. Thư mục dự án hiện tại là `C:\Users\buiqu\Desktop\BTL-LTW1`; mở `QuanLyCuaHangSuaXe.sln` ngay trong thư mục này. Remote Git: `https://github.com/Minhxz/BTL-LTW.git`. Các thay đổi hiện tại chưa được commit/push.

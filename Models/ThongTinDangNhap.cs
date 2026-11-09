@@ -3,7 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace QLyCuaHangSuaXe.Models;
 
-// Người 1: dữ liệu form đăng nhập.
 public sealed class ThongTinDangNhap
 {
     [Required(ErrorMessage = "Vui lòng nhập tên đăng nhập."), StringLength(50)]

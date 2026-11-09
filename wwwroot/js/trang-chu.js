@@ -1,69 +1,67 @@
 (() => {
-  "use strict";
-  window.TienIchSuaXe = {
-    request: window.GiaoTiepMayChu.request,
-    escape(value) {
-      return String(value ?? "").replace(
-        /[&<>"']/g,
-        (ch) =>
-          ({
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;",
-          })[ch],
-      );
-    },
-    date(value) {
-      const parts = String(value || "").split("-");
-      return parts.length === 3 ? parts.reverse().join("/") : value;
-    },
-    today() {
-      return new Intl.DateTimeFormat("sv-SE", {
-        timeZone: "Asia/Bangkok",
-      }).format(new Date());
-    },
-  };
-  document
-    .querySelector("#customer-logout")
-    ?.addEventListener("click", async (event) => {
-      event.currentTarget.disabled = true;
-      try {
-        await window.TienIchSuaXe.request("/api/auth/logout", {
-          method: "POST",
-        });
-        location.assign("/");
-      } catch (error) {
-        event.currentTarget.disabled = false;
-        alert(error.message);
-      }
-    });
-  const toggle = document.querySelector(".menu-toggle");
-  const menu = document.getElementById("main-nav");
-  if (toggle && menu) {
-    const close = () => {
-      menu.classList.remove("open");
-      toggle.setAttribute("aria-expanded", "false");
-      toggle.setAttribute("aria-label", "Mở menu");
+    "use strict";
+    window.TienIchSuaXe = {
+        guiYeuCau: window.GiaoTiepMayChu.guiYeuCau,
+        maHoaHtml(giaTriNhap) {
+            return String(giaTriNhap ?? "").replace(
+                /[&<>"']/g,
+                (kyTuHtml) =>
+                    ({
+                        "&": "&amp;",
+                        "<": "&lt;",
+                        ">": "&gt;",
+                        '"': "&quot;",
+                        "'": "&#39;",
+                    })[kyTuHtml],
+            );
+        },
+        dinhDangNgay(giaTriNhap) {
+            const cacPhuTung = String(giaTriNhap || "").split("-");
+            return cacPhuTung.length === 3 ? cacPhuTung.reverse().join("/") : giaTriNhap;
+        },
+        homNay() {
+            return new Intl.DateTimeFormat("sv-SE", {
+                timeZone: "Asia/Bangkok",
+            }).format(new Date());
+        },
     };
-    toggle.addEventListener("click", () => {
-      const open = menu.classList.toggle("open");
-      toggle.setAttribute("aria-expanded", String(open));
-      toggle.setAttribute("aria-label", open ? "Đóng menu" : "Mở menu");
+    document.querySelector("#customer-logout")?.addEventListener("click", async (suKien) => {
+        suKien.currentTarget.disabled = true;
+        try {
+            await window.TienIchSuaXe.guiYeuCau("/api/auth/logout", {
+                method: "POST",
+            });
+            location.assign("/");
+        } catch (loi) {
+            suKien.currentTarget.disabled = false;
+            alert(loi.message);
+        }
     });
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") close();
-    });
-    menu
-      .querySelectorAll("a")
-      .forEach((link) => link.addEventListener("click", close));
-    window.addEventListener("resize", () => {
-      if (window.innerWidth > 720) close();
-    });
-    menu.querySelectorAll("a").forEach((link) => {
-      if (link.pathname.toLowerCase() === location.pathname.toLowerCase())
-        link.setAttribute("aria-current", "page");
-    });
-  }
+    const nutMoMenu = document.querySelector(".menu-toggle");
+    const trinhDon = document.getElementById("main-nav");
+    if (nutMoMenu && trinhDon) {
+        const dongMenu = () => {
+            trinhDon.classList.remove("open");
+            nutMoMenu.setAttribute("aria-expanded", "false");
+            nutMoMenu.setAttribute("aria-label", "Mở menu");
+        };
+        nutMoMenu.addEventListener("click", () => {
+            const dangMo = trinhDon.classList.toggle("open");
+            nutMoMenu.setAttribute("aria-expanded", String(dangMo));
+            nutMoMenu.setAttribute("aria-label", dangMo ? "Đóng menu" : "Mở menu");
+        });
+        document.addEventListener("keydown", (suKien) => {
+            if (suKien.key === "Escape") dongMenu();
+        });
+        trinhDon
+            .querySelectorAll("a")
+            .forEach((lienKet) => lienKet.addEventListener("click", dongMenu));
+        window.addEventListener("resize", () => {
+            if (window.innerWidth > 720) dongMenu();
+        });
+        trinhDon.querySelectorAll("a").forEach((lienKet) => {
+            if (lienKet.pathname.toLowerCase() === location.pathname.toLowerCase())
+                lienKet.setAttribute("aria-current", "page");
+        });
+    }
 })();

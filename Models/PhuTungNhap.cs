@@ -3,8 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace QLyCuaHangSuaXe.Models;
 
-// Người 4: một dòng phụ tùng trong phiếu nhập kho.
-// Không nhận đơn giá từ trình duyệt: máy chủ lấy giá nhập của lô phụ tùng.
 public sealed class PhuTungNhap
 {
     [Required(ErrorMessage = "Chọn phụ tùng cần nhập."), StringLength(10)]

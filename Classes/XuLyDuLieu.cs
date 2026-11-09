@@ -6,79 +6,85 @@ using Microsoft.Data.SqlClient;
 
 namespace QLyCuaHangSuaXe.LopDungChung;
 
-// Người 3 chủ trì: kết nối SQL Server, truy vấn có tham số và giao dịch dùng chung cho cả 5 phần.
-public sealed class XuLyDuLieu(IConfiguration configuration)
+public sealed class XuLyDuLieu(IConfiguration cauHinh)
 {
-    // 20 bảng gốc của bài BTL-LTTQ; web chỉ dùng lại, không tạo hay xóa các bảng này.
     private static readonly string[] CacBangCuaNhom =
     [
-        "NhanVien", "KhachHang", "Xe", "DichVu", "PhuTung",
-        "PhieuTiepNhan", "ChiTietPhieuTiepNhan", "HoaDon", "ChiTietPhanCong", "PhieuNhap",
-        "ChiTietPhieuNhap", "NhaCungCap", "ChucVu", "CaLam", "ChiTietCaLam",
-        "KhoanDieuChinh", "ChucVuDieuChinh", "ChiTietDichVu", "DieuChinhTonKho", "DieuChinhGiaBan"
+        "NhanVien",
+        "KhachHang",
+        "Xe",
+        "DichVu",
+        "PhuTung",
+        "PhieuTiepNhan",
+        "ChiTietPhieuTiepNhan",
+        "HoaDon",
+        "ChiTietPhanCong",
+        "PhieuNhap",
+        "ChiTietPhieuNhap",
+        "NhaCungCap",
+        "ChucVu",
+        "CaLam",
+        "ChiTietCaLam",
+        "KhoanDieuChinh",
+        "ChucVuDieuChinh",
+        "ChiTietDichVu",
+        "DieuChinhTonKho",
+        "DieuChinhGiaBan",
     ];
-
     public string ChuoiKetNoi =>
-        configuration.GetConnectionString("QuanLySuaXe")
+        cauHinh.GetConnectionString("QuanLySuaXe")
         ?? throw new InvalidOperationException("Chưa cấu hình kết nối QuanLySuaXe.");
-
-    // Giờ Việt Nam (UTC+7), không phụ thuộc múi giờ của máy chạy web.
-    public static DateTime ThoiGianHienTai => DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(7)).DateTime;
-
+    public static DateTime ThoiGianHienTai =>
+        DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(7)).DateTime;
     public static DateTime HomNay => ThoiGianHienTai.Date;
 
-    // Mã mới dài đúng 10 ký tự: tiền tố + chuỗi hex ngẫu nhiên. Ví dụ: PN3FA91C2B.
     public static string TaoMaMoi(string tienTo)
     {
         string chuoiNgauNhien = Convert.ToHexString(RandomNumberGenerator.GetBytes(5));
-
         return tienTo + chuoiNgauNhien[..(10 - tienTo.Length)];
     }
 
-    // SHA-256 để tương thích mật khẩu với ứng dụng BTL-LTTQ.
     public static string BamMatKhau(string matKhau)
     {
         byte[] maBam = SHA256.HashData(Encoding.UTF8.GetBytes(matKhau));
-
         return Convert.ToHexString(maBam);
     }
 
-    // Mở một kết nối, chạy thao tác đọc rồi đóng kết nối.
     public async Task<T> DocAsync<T>(Func<PhienGiaoDich, Task<T>> thaoTac)
     {
         await using SqlConnection ketNoi = new SqlConnection(ChuoiKetNoi);
         await ketNoi.OpenAsync();
-
         return await thaoTac(new PhienGiaoDich(ketNoi, null));
     }
 
-    public Task<List<Dictionary<string, object?>>> DocBangAsync(string sql, object? thamSo = null)
+    public Task<List<Dictionary<string, object?>>> DocBangAsync(
+        string cauLenhSql,
+        object? thamSo = null
+    )
     {
-        return DocAsync(s => s.DocBangAsync(sql, thamSo));
+        return DocAsync(phien => phien.DocBangAsync(cauLenhSql, thamSo));
     }
 
-    public Task<T?> DocGiaTriAsync<T>(string sql, object? thamSo = null)
+    public Task<T?> DocGiaTriAsync<T>(string cauLenhSql, object? thamSo = null)
     {
-        return DocAsync(s => s.DocGiaTriAsync<T>(sql, thamSo));
+        return DocAsync(phien => phien.DocGiaTriAsync<T>(cauLenhSql, thamSo));
     }
 
-    public Task<int> ThucThiAsync(string sql, object? thamSo = null)
+    public Task<int> ThucThiAsync(string cauLenhSql, object? thamSo = null)
     {
-        return DocAsync(s => s.ThucThiAsync(sql, thamSo));
+        return DocAsync(phien => phien.ThucThiAsync(cauLenhSql, thamSo));
     }
 
-    // Chạy nhiều câu lệnh trong một giao dịch: lỗi ở bất kỳ bước nào thì hoàn tác toàn bộ.
     public async Task<T> TrongGiaoDichAsync<T>(Func<PhienGiaoDich, Task<T>> thaoTac)
     {
         await using SqlConnection ketNoi = new SqlConnection(ChuoiKetNoi);
         await ketNoi.OpenAsync();
-        await using SqlTransaction giaoDich = (SqlTransaction)await ketNoi.BeginTransactionAsync(IsolationLevel.Serializable);
-
+        await using SqlTransaction giaoDich = (SqlTransaction)
+            await ketNoi.BeginTransactionAsync(IsolationLevel.Serializable);
         try
         {
             T ketQua = await thaoTac(new PhienGiaoDich(ketNoi, giaoDich));
             await giaoDich.CommitAsync();
-
             return ketQua;
         }
         catch
@@ -88,41 +94,84 @@ public sealed class XuLyDuLieu(IConfiguration configuration)
         }
     }
 
-    // Kiểm tra CSDL của nhóm khi khởi động, rồi tạo các bảng mở rộng của web nếu chưa có.
     public async Task KhoiTaoAsync(string thuMucGoc)
     {
-        string sqlDemBang = "Select Count(*) " +
-            "From sys.tables " +
-            "Where name In ('" + string.Join("','", CacBangCuaNhom) + "') And schema_id = Schema_Id('dbo')";
-
+        string sqlDemBang =
+            "Select Count(*) "
+            + "From sys.tables "
+            + "Where name In ('"
+            + string.Join("','", CacBangCuaNhom)
+            + "') And schema_id = Schema_Id('dbo')";
         int soBang = await DocGiaTriAsync<int>(sqlDemBang);
-
         if (soBang != CacBangCuaNhom.Length)
         {
-            throw new InvalidOperationException("QuanLySuaXe chưa có đủ 20 bảng của nhóm. Xem README để chọn đúng SQL Server; ứng dụng không tạo lại hoặc xóa CSDL.");
+            throw new InvalidOperationException(
+                "QuanLySuaXe chưa có đủ 20 bảng của nhóm. Xem README để chọn đúng SQL Server; ứng dụng không tạo lại hoặc xóa CSDL."
+            );
         }
 
-        string sqlBoSung = await File.ReadAllTextAsync(Path.Combine(thuMucGoc, "database", "BoSungChoWeb.sql"));
-
-        await TrongGiaoDichAsync(s => s.ThucThiAsync(sqlBoSung));
+        string sqlBoSung = await File.ReadAllTextAsync(
+            Path.Combine(thuMucGoc, "database", "BoSungChoWeb.sql")
+        );
+        await TrongGiaoDichAsync(phien => phien.ThucThiAsync(sqlBoSung));
     }
 }
 
-// Một phiên làm việc trên kết nối đang mở (có hoặc không có giao dịch).
 public sealed class PhienGiaoDich(SqlConnection ketNoi, SqlTransaction? giaoDich)
 {
-    // Tạo câu lệnh có tham số. thamSo là đối tượng ẩn danh new { id = ... } hoặc Dictionary.
-    private SqlCommand TaoLenh(string sql, object? thamSo)
+    public async Task<string> TaoMaTuDongAsync(string tenBang, string tenCot, string tienTo)
     {
-        SqlCommand lenh = new SqlCommand(sql, ketNoi, giaoDich)
-        {
-            CommandTimeout = 30
-        };
+        int doDaiPhanSo = 10 - tienTo.Length;
+        string tenBoDem = "WebMa_" + tenBang;
+        string sqlLaySo = $"""
+            DECLARE @ketQuaKhoa int;
+            EXEC @ketQuaKhoa = sys.sp_getapplock
+                @Resource = @tenBoDem, @LockMode = 'Exclusive',
+                @LockOwner = 'Transaction', @LockTimeout = 10000;
+            IF @ketQuaKhoa < 0
+                THROW 50001, N'Chưa thể cấp mã. Vui lòng thử lại.', 1;
 
+            DECLARE @soDaDung bigint = (
+                SELECT COALESCE(MAX(TRY_CONVERT(bigint, SUBSTRING([{tenCot}], @viTri, 10))), 0)
+                FROM [{tenBang}] WITH (TABLOCKX, HOLDLOCK)
+                WHERE LEFT([{tenCot}], @doDaiTienTo) = @tienTo
+            );
+            DECLARE @soBatDau varchar(20) = CONVERT(varchar(20), @soDaDung + 1);
+            IF OBJECT_ID(N'dbo.{tenBoDem}', N'SO') IS NULL
+                EXEC('CREATE SEQUENCE dbo.[{tenBoDem}] AS bigint START WITH ' + @soBatDau + ' INCREMENT BY 1 NO CYCLE');
+            ELSE IF (SELECT CONVERT(bigint, current_value) FROM sys.sequences WHERE object_id = OBJECT_ID(N'dbo.{tenBoDem}')) <= @soDaDung
+                EXEC('ALTER SEQUENCE dbo.[{tenBoDem}] RESTART WITH ' + @soBatDau);
+
+            EXEC('SELECT NEXT VALUE FOR dbo.[{tenBoDem}]');
+            """;
+        long soTiepTheo = await DocGiaTriAsync<long>(
+            sqlLaySo,
+            new
+            {
+                viTri = tienTo.Length + 1,
+                doDaiTienTo = tienTo.Length,
+                tienTo,
+                tenBoDem,
+            }
+        );
+        string phanSo = soTiepTheo.ToString(CultureInfo.InvariantCulture);
+        if (phanSo.Length > doDaiPhanSo)
+        {
+            throw new InvalidOperationException("Đã hết mã tự động cho danh mục này.");
+        }
+
+        return tienTo + phanSo.PadLeft(doDaiPhanSo, '0');
+    }
+
+    private SqlCommand TaoLenh(string cauLenhSql, object? thamSo)
+    {
+        SqlCommand lenh = new SqlCommand(cauLenhSql, ketNoi, giaoDich) { CommandTimeout = 30 };
         IDictionary<string, object?>? danhSachThamSo = thamSo is IDictionary<string, object?> tuDien
             ? tuDien
-            : thamSo?.GetType().GetProperties().ToDictionary(p => p.Name, p => p.GetValue(thamSo));
-
+            : thamSo
+                ?.GetType()
+                .GetProperties()
+                .ToDictionary(thuocTinh => thuocTinh.Name, thuocTinh => thuocTinh.GetValue(thamSo));
         if (danhSachThamSo == null)
         {
             return lenh;
@@ -134,30 +183,30 @@ public sealed class PhienGiaoDich(SqlConnection ketNoi, SqlTransaction? giaoDich
             {
                 DateOnly ngay => ngay.ToDateTime(TimeOnly.MinValue),
                 null => DBNull.Value,
-                _ => cap.Value!
+                _ => cap.Value!,
             };
-
             lenh.Parameters.AddWithValue("@" + cap.Key.TrimStart('@'), giaTri);
         }
 
         return lenh;
     }
 
-    // Đọc nhiều dòng; mỗi dòng là Dictionary tên cột → giá trị (không phân biệt hoa/thường).
-    public async Task<List<Dictionary<string, object?>>> DocBangAsync(string sql, object? thamSo = null)
+    public async Task<List<Dictionary<string, object?>>> DocBangAsync(
+        string cauLenhSql,
+        object? thamSo = null
+    )
     {
-        using SqlCommand lenh = TaoLenh(sql, thamSo);
+        using SqlCommand lenh = TaoLenh(cauLenhSql, thamSo);
         await using SqlDataReader boDoc = await lenh.ExecuteReaderAsync();
-
         List<Dictionary<string, object?>> danhSachDong = new List<Dictionary<string, object?>>();
-
         while (await boDoc.ReadAsync())
         {
-            Dictionary<string, object?> dong = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-
-            for (int i = 0; i < boDoc.FieldCount; i++)
+            Dictionary<string, object?> dong = new Dictionary<string, object?>(
+                StringComparer.OrdinalIgnoreCase
+            );
+            for (int chiSo = 0; chiSo < boDoc.FieldCount; chiSo++)
             {
-                dong[boDoc.GetName(i)] = boDoc.IsDBNull(i) ? null : boDoc.GetValue(i);
+                dong[boDoc.GetName(chiSo)] = boDoc.IsDBNull(chiSo) ? null : boDoc.GetValue(chiSo);
             }
 
             danhSachDong.Add(dong);
@@ -166,32 +215,26 @@ public sealed class PhienGiaoDich(SqlConnection ketNoi, SqlTransaction? giaoDich
         return danhSachDong;
     }
 
-    // Đọc một giá trị (ô đầu tiên). Không có dữ liệu thì trả về giá trị mặc định của kiểu T.
-    public async Task<T?> DocGiaTriAsync<T>(string sql, object? thamSo = null)
+    public async Task<T?> DocGiaTriAsync<T>(string cauLenhSql, object? thamSo = null)
     {
-        using SqlCommand lenh = TaoLenh(sql, thamSo);
+        using SqlCommand lenh = TaoLenh(cauLenhSql, thamSo);
         object? giaTri = await lenh.ExecuteScalarAsync();
-
         if (giaTri is null or DBNull)
         {
             return default;
         }
 
         Type kieuDich = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
-
         return (T)Convert.ChangeType(giaTri, kieuDich, CultureInfo.InvariantCulture);
     }
 
-    // Chạy Insert/Update/Delete, trả về số dòng bị ảnh hưởng.
-    public async Task<int> ThucThiAsync(string sql, object? thamSo = null)
+    public async Task<int> ThucThiAsync(string cauLenhSql, object? thamSo = null)
     {
-        using SqlCommand lenh = TaoLenh(sql, thamSo);
-
+        using SqlCommand lenh = TaoLenh(cauLenhSql, thamSo);
         return await lenh.ExecuteNonQueryAsync();
     }
 }
 
-// Hàm tiện ích đọc giá trị từ một dòng kết quả.
 public static class DocGiaTri
 {
     public static string Chuoi(this Dictionary<string, object?> dong, string tenCot)

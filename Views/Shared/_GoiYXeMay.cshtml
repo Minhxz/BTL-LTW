@@ -1,8 +1,8 @@
 @using QLyCuaHangSuaXe.LopDungChung
 <datalist id="motorcycle-models">
-    @foreach (var mau in PhanLoaiXeMay.MauXe.Keys)
+    @foreach (string mauXe in PhanLoaiXeMay.MauXe.Keys)
     {
-        <option value="@mau"></option>
+        <option value="@mauXe"></option>
     }
 </datalist>
 <datalist id="motorcycle-brands">

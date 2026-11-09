@@ -3,7 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace QLyCuaHangSuaXe.Models;
 
-// Người 2: nhân viên nhận lịch hẹn online và chuyển thành phiếu tiếp nhận.
 public sealed class YeuCauNhanLich
 {
     [JsonPropertyName("dueDate")]

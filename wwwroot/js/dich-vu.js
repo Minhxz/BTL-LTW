@@ -1,154 +1,149 @@
 (() => {
-  "use strict";
-  const catalog = document.getElementById("service-catalog");
-  if (!catalog) return;
-  const dialog = document.getElementById("service-dialog");
-  const message = document.getElementById("service-catalog-message");
-  const retry = document.getElementById("service-catalog-retry");
-  const money = (value) =>
-    new Intl.NumberFormat("vi-VN", {
-      style: "currency",
-      currency: "VND",
-      maximumFractionDigits: 0,
-    }).format(Number(value) || 0);
-  let trigger;
-  function safeImage(value) {
-    if (!value) return "";
-    try {
-      const url = new URL(value, location.origin);
-      return url.origin === location.origin && url.pathname.startsWith("/")
-        ? url.href
-        : "";
-    } catch {
-      return "";
+    "use strict";
+    const danhMuc = document.getElementById("service-catalog");
+    if (!danhMuc) return;
+    const hopThoai = document.getElementById("service-dialog");
+    const thongBao = document.getElementById("service-catalog-message");
+    const nutThuLai = document.getElementById("service-catalog-retry");
+    const dinhDangTien = (giaTriNhap) =>
+        new Intl.NumberFormat("vi-VN", {
+            style: "currency",
+            currency: "VND",
+            maximumFractionDigits: 0,
+        }).format(Number(giaTriNhap) || 0);
+    let nutMo;
+    function layAnhHopLe(giaTriNhap) {
+        if (!giaTriNhap) return "";
+        try {
+            const duongDan = new URL(giaTriNhap, location.origin);
+            return duongDan.origin === location.origin && duongDan.pathname.startsWith("/")
+                ? duongDan.href
+                : "";
+        } catch {
+            return "";
+        }
     }
-  }
-  function description(value) {
-    const source = new DOMParser().parseFromString(
-      String(value || ""),
-      "text/html",
-    );
-    const allowed = new Set(["P", "BR", "STRONG", "EM", "UL", "OL", "LI"]);
-    const blocked = new Set([
-      "SCRIPT",
-      "STYLE",
-      "IFRAME",
-      "OBJECT",
-      "SVG",
-      "MATH",
-      "TEMPLATE",
-    ]);
-    function copy(node) {
-      if (node.nodeType === Node.TEXT_NODE)
-        return document.createTextNode(node.textContent);
-      const fragment = document.createDocumentFragment();
-      if (node.nodeType !== Node.ELEMENT_NODE || blocked.has(node.tagName))
-        return fragment;
-      const tag =
-        { B: "STRONG", I: "EM", DIV: "P" }[node.tagName] || node.tagName;
-      const target = allowed.has(tag)
-        ? document.createElement(tag.toLowerCase())
-        : fragment;
-      node.childNodes.forEach((child) => target.append(copy(child)));
-      return target;
+    function taoMoTa(giaTriNhap) {
+        const nguon = new DOMParser().parseFromString(String(giaTriNhap || ""), "text/html");
+        const cacTheChoPhep = new Set(["P", "BR", "STRONG", "EM", "UL", "OL", "LI"]);
+        const cacTheBiChan = new Set([
+            "SCRIPT",
+            "STYLE",
+            "IFRAME",
+            "OBJECT",
+            "SVG",
+            "MATH",
+            "TEMPLATE",
+        ]);
+        function saoChep(nutTaiLieu) {
+            if (nutTaiLieu.nodeType === Node.TEXT_NODE)
+                return document.createTextNode(nutTaiLieu.textContent);
+            const doanTaiLieu = document.createDocumentFragment();
+            if (nutTaiLieu.nodeType !== Node.ELEMENT_NODE || cacTheBiChan.has(nutTaiLieu.tagName))
+                return doanTaiLieu;
+            const tenThe =
+                { B: "STRONG", I: "EM", DIV: "P" }[nutTaiLieu.tagName] || nutTaiLieu.tagName;
+            const phanTuDich = cacTheChoPhep.has(tenThe)
+                ? document.createElement(tenThe.toLowerCase())
+                : doanTaiLieu;
+            nutTaiLieu.childNodes.forEach((phanTuCon) => phanTuDich.append(saoChep(phanTuCon)));
+            return phanTuDich;
+        }
+        const ketQua = document.createDocumentFragment();
+        nguon.body.childNodes.forEach((phanTuCon) => ketQua.append(saoChep(phanTuCon)));
+        return ketQua;
     }
-    const result = document.createDocumentFragment();
-    source.body.childNodes.forEach((child) => result.append(copy(child)));
-    return result;
-  }
-  function showService(item, button) {
-    trigger = button;
-    document.getElementById("service-dialog-title").textContent = item.name;
-    document.getElementById("service-dialog-price").textContent =
-      "Giá tham khảo: " + money(item.price);
-    document
-      .getElementById("service-dialog-description")
-      .replaceChildren(description(item.description));
-    const image = document.getElementById("service-dialog-image");
-    image.hidden = true;
-    image.onerror = () => {
-      image.hidden = true;
-    };
-    image.onload = () => {
-      image.hidden = false;
-    };
-    image.alt = item.name;
-    const source = safeImage(item.imageUrl);
-    if (source) image.src = source;
-    else image.removeAttribute("src");
-    document.getElementById("service-dialog-booking").href =
-      "/Home/Booking?service=" + encodeURIComponent(item.id);
-    dialog.showModal();
-  }
-  function card(item) {
-    const article = document.createElement("article");
-    article.className = "service-card catalog-card";
-    const photo = document.createElement("div");
-    photo.className = "catalog-photo";
-    const fallback = document.createElement("span");
-    fallback.className = "catalog-photo-label";
-    fallback.textContent = "CỬA HÀNG SỬA XE";
-    photo.append(fallback);
-    const source = safeImage(item.imageUrl);
-    if (source) {
-      const image = document.createElement("img");
-      image.src = source;
-      image.alt = item.name;
-      image.loading = "lazy";
-      image.addEventListener("error", () => image.remove());
-      photo.append(image);
+    function hienDichVu(muc, nut) {
+        nutMo = nut;
+        document.getElementById("service-dialog-title").textContent = muc.name;
+        document.getElementById("service-dialog-price").textContent =
+            "Giá tham khảo: " + dinhDangTien(muc.price);
+        document
+            .getElementById("service-dialog-description")
+            .replaceChildren(taoMoTa(muc.description));
+        const anh = document.getElementById("service-dialog-image");
+        anh.hidden = true;
+        anh.onerror = () => {
+            anh.hidden = true;
+        };
+        anh.onload = () => {
+            anh.hidden = false;
+        };
+        anh.alt = muc.name;
+        const nguon = layAnhHopLe(muc.imageUrl);
+        if (nguon) anh.src = nguon;
+        else anh.removeAttribute("src");
+        document.getElementById("service-dialog-booking").href =
+            "/Home/Booking?service=" + encodeURIComponent(muc.id);
+        hopThoai.showModal();
     }
-    const title = document.createElement("h3");
-    title.textContent = item.name;
-    const price = document.createElement("p");
-    price.className = "catalog-price";
-    price.textContent = "Tham khảo: " + money(item.price);
-    const excerpt = document.createElement("p");
-    excerpt.className = "catalog-excerpt";
-    const plain = description(item.description).textContent.trim();
-    excerpt.textContent =
-      plain.length > 145
-        ? plain.slice(0, 145) + "…"
-        : plain || "Xem chi tiết dịch vụ và đặt lịch theo nhu cầu của bạn.";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "XEM CHI TIẾT ↗";
-    button.addEventListener("click", () => showService(item, button));
-    article.append(photo, title, price, excerpt, button);
-    return article;
-  }
-  async function load() {
-    retry.hidden = true;
-    message.hidden = false;
-    message.textContent = "Đang tải dịch vụ…";
-    try {
-      const data = await window.TienIchSuaXe.request("/api/services");
-      const items = data.services || [];
-      catalog.replaceChildren(...items.map(card));
-      message.textContent = items.length
-        ? ""
-        : "Chưa có dịch vụ. Vui lòng quay lại sau.";
-      message.hidden = Boolean(items.length);
-    } catch (error) {
-      message.textContent = error.message;
-      retry.hidden = false;
+    function theNoiDung(muc) {
+        const baiViet = document.createElement("article");
+        baiViet.className = "service-card catalog-card";
+        const anhDaiDien = document.createElement("div");
+        anhDaiDien.className = "catalog-photo";
+        const giaTriDuPhong = document.createElement("span");
+        giaTriDuPhong.className = "catalog-photo-label";
+        giaTriDuPhong.textContent = "CỬA HÀNG SỬA XE";
+        anhDaiDien.append(giaTriDuPhong);
+        const nguon = layAnhHopLe(muc.imageUrl);
+        if (nguon) {
+            const anh = document.createElement("img");
+            anh.src = nguon;
+            anh.alt = muc.name;
+            anh.loading = "lazy";
+            anh.addEventListener("error", () => anh.remove());
+            anhDaiDien.append(anh);
+        }
+        const tieuDeNhap = document.createElement("h3");
+        tieuDeNhap.textContent = muc.name;
+        const donGia = document.createElement("p");
+        donGia.className = "catalog-price";
+        donGia.textContent = "Tham khảo: " + dinhDangTien(muc.price);
+        const moTaNgan = document.createElement("p");
+        moTaNgan.className = "catalog-excerpt";
+        const vanBan = taoMoTa(muc.description).textContent.trim();
+        moTaNgan.textContent =
+            vanBan.length > 145
+                ? vanBan.slice(0, 145) + "…"
+                : vanBan || "Xem chi tiết dịch vụ và đặt lịch theo nhu cầu của bạn.";
+        const nut = document.createElement("button");
+        nut.type = "button";
+        nut.textContent = "XEM CHI TIẾT ↗";
+        nut.addEventListener("click", () => hienDichVu(muc, nut));
+        baiViet.append(anhDaiDien, tieuDeNhap, donGia, moTaNgan, nut);
+        return baiViet;
     }
-  }
-  retry.addEventListener("click", load);
-  dialog
-    .querySelector("[data-close-dialog]")
-    .addEventListener("click", () => dialog.close());
-  dialog.addEventListener("click", (event) => {
-    if (event.target !== dialog) return;
-    const rect = dialog.getBoundingClientRect();
-    if (
-      event.clientX < rect.left ||
-      event.clientX > rect.right ||
-      event.clientY < rect.top ||
-      event.clientY > rect.bottom
-    )
-      dialog.close();
-  });
-  dialog.addEventListener("close", () => trigger?.focus());
-  load();
+    async function taiDanhSach() {
+        nutThuLai.hidden = true;
+        thongBao.hidden = false;
+        thongBao.textContent = "Đang tải dịch vụ…";
+        try {
+            const duLieuTraVe = await window.TienIchSuaXe.guiYeuCau("/api/services");
+            const cacMucDuLieu = duLieuTraVe.services || [];
+            danhMuc.replaceChildren(...cacMucDuLieu.map(theNoiDung));
+            thongBao.textContent = cacMucDuLieu.length
+                ? ""
+                : "Chưa có dịch vụ. Vui lòng quay lại sau.";
+            thongBao.hidden = Boolean(cacMucDuLieu.length);
+        } catch (loi) {
+            thongBao.textContent = loi.message;
+            nutThuLai.hidden = false;
+        }
+    }
+    nutThuLai.addEventListener("click", taiDanhSach);
+    hopThoai.querySelector("[data-close-dialog]").addEventListener("click", () => hopThoai.close());
+    hopThoai.addEventListener("click", (suKien) => {
+        if (suKien.target !== hopThoai) return;
+        const khung = hopThoai.getBoundingClientRect();
+        if (
+            suKien.clientX < khung.left ||
+            suKien.clientX > khung.right ||
+            suKien.clientY < khung.top ||
+            suKien.clientY > khung.bottom
+        )
+            hopThoai.close();
+    });
+    hopThoai.addEventListener("close", () => nutMo?.focus());
+    taiDanhSach();
 })();

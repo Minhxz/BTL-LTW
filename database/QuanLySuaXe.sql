@@ -1,5 +1,3 @@
--- Bản cài mới cho CSDL TRỐNG. Không xóa hoặc ghi đè CSDL nhóm đang dùng.
--- Nếu QuanLySuaXe đã có dữ liệu, chỉ chạy website; không chạy file này.
 USE master;
 GO
 IF DB_ID(N'QuanLySuaXe') IS NOT NULL
@@ -12,17 +10,16 @@ CREATE DATABASE QuanLySuaXe COLLATE Vietnamese_CI_AS;
 GO
 USE QuanLySuaXe;
 GO
-/* =====================================================================
-   PHẦN 1: TẠO BẢNG
-   ===================================================================== */
 
--- ---------- Nhân sự ----------
+
+
+
 CREATE TABLE ChucVu (
     MaChucVu        VARCHAR(10)    NOT NULL,
     TenChucVu       NVARCHAR(100)  NOT NULL,
     MoTa            NVARCHAR(255)  NOT NULL,
     HeSoLuong       DECIMAL(4,2)   NOT NULL,
-    TienDieuChinh   DECIMAL(18,0)  NOT NULL,   -- tổng các khoản điều chỉnh của chức vụ
+    TienDieuChinh   DECIMAL(18,0)  NOT NULL,
     CONSTRAINT PK_ChucVu PRIMARY KEY (MaChucVu),
     CONSTRAINT UQ_ChucVu_Ten UNIQUE (TenChucVu),
     CONSTRAINT CK_ChucVu_HeSoLuong CHECK (HeSoLuong > 0)
@@ -31,7 +28,7 @@ CREATE TABLE ChucVu (
 CREATE TABLE KhoanDieuChinh (
     MaKhoanDieuChinh   VARCHAR(10)    NOT NULL,
     TenKhoanDieuChinh  NVARCHAR(150)  NOT NULL,
-    SoTien             DECIMAL(18,0)  NOT NULL,   -- dương: phụ cấp/thưởng, âm: phạt
+    SoTien             DECIMAL(18,0)  NOT NULL,
     CONSTRAINT PK_KhoanDieuChinh PRIMARY KEY (MaKhoanDieuChinh),
     CONSTRAINT CK_KhoanDieuChinh_SoTien CHECK (SoTien <> 0)
 );
@@ -51,7 +48,7 @@ CREATE TABLE NhanVien (
     SoDienThoai  VARCHAR(15)    NOT NULL,
     Luong        DECIMAL(18,0)  NOT NULL,
     TenDangNhap  VARCHAR(50)    NOT NULL,
-    MatKhau      VARCHAR(64)    NOT NULL,   -- SHA-256 dạng HEX
+    MatKhau      VARCHAR(64)    NOT NULL,
     TrangThai    BIT            NOT NULL,
     CONSTRAINT PK_NhanVien PRIMARY KEY (MaNhanVien),
     CONSTRAINT FK_NhanVien_ChucVu FOREIGN KEY (MaChucVu) REFERENCES ChucVu(MaChucVu),
@@ -62,7 +59,7 @@ CREATE TABLE NhanVien (
 
 CREATE TABLE CaLam (
     MaCaLam          VARCHAR(10)   NOT NULL,
-    ThoiGianCaLam    DECIMAL(4,2)  NOT NULL,   -- số giờ của ca
+    ThoiGianCaLam    DECIMAL(4,2)  NOT NULL,
     ThoiGianBatDau   TIME(0)       NOT NULL,
     ThoiGianKetThuc  TIME(0)       NOT NULL,
     CONSTRAINT PK_CaLam PRIMARY KEY (MaCaLam),
@@ -73,14 +70,14 @@ CREATE TABLE ChiTietCaLam (
     MaNhanVien             VARCHAR(10)   NOT NULL,
     MaCaLam                VARCHAR(10)   NOT NULL,
     NgayLam                DATE          NOT NULL,
-    TongThoiGianLamThucTe  DECIMAL(4,2)  NOT NULL,   -- số giờ thực tế
+    TongThoiGianLamThucTe  DECIMAL(4,2)  NOT NULL,
     CONSTRAINT PK_ChiTietCaLam PRIMARY KEY (MaNhanVien, MaCaLam, NgayLam),
     CONSTRAINT FK_CTCL_NhanVien FOREIGN KEY (MaNhanVien) REFERENCES NhanVien(MaNhanVien),
     CONSTRAINT FK_CTCL_CaLam FOREIGN KEY (MaCaLam) REFERENCES CaLam(MaCaLam),
     CONSTRAINT CK_CTCL_TongThoiGian CHECK (TongThoiGianLamThucTe >= 0)
 );
 
--- ---------- Khách hàng - Xe ----------
+
 CREATE TABLE KhachHang (
     MaKhachHang   VARCHAR(10)    NOT NULL,
     TenKhachHang  NVARCHAR(100)  NOT NULL,
@@ -89,7 +86,7 @@ CREATE TABLE KhachHang (
     CONSTRAINT UQ_KhachHang_SoDienThoai UNIQUE (SoDienThoai)
 );
 
-CREATE TABLE Xe (   -- mỗi lượt xe vào cửa hàng là một bản ghi Xe mới
+CREATE TABLE Xe (
     MaXe         VARCHAR(10)    NOT NULL,
     MaKhachHang  VARCHAR(10)    NOT NULL,
     BienXe       VARCHAR(20)    NOT NULL,
@@ -111,7 +108,7 @@ CREATE TABLE ChiTietPhanCong (
     CONSTRAINT CK_CTPC_ThoiGian CHECK (ThoiGianHoanThanh > ThoiGianBatDau)
 );
 
--- ---------- Dịch vụ - Phụ tùng - Nhập kho ----------
+
 CREATE TABLE DichVu (
     MaDichVu         VARCHAR(10)    NOT NULL,
     TenDichVu        NVARCHAR(150)  NOT NULL,
@@ -130,7 +127,7 @@ CREATE TABLE NhaCungCap (
     CONSTRAINT PK_NhaCungCap PRIMARY KEY (MaNhaCungCap)
 );
 
-CREATE TABLE PhuTung (   -- khác NCC hoặc khác hạn sử dụng => mã phụ tùng mới
+CREATE TABLE PhuTung (
     MaPhuTung     VARCHAR(10)    NOT NULL,
     MaNhaCungCap  VARCHAR(10)    NOT NULL,
     TenPhuTung    NVARCHAR(150)  NOT NULL,
@@ -141,11 +138,11 @@ CREATE TABLE PhuTung (   -- khác NCC hoặc khác hạn sử dụng => mã ph�
     TrangThai     BIT            NOT NULL,
     CONSTRAINT PK_PhuTung PRIMARY KEY (MaPhuTung),
     CONSTRAINT FK_PhuTung_NhaCungCap FOREIGN KEY (MaNhaCungCap) REFERENCES NhaCungCap(MaNhaCungCap),
-    CONSTRAINT CK_PhuTung_Gia CHECK (DonGiaNhap > 0 AND DonGiaBan > 0),   -- giá bán được thấp hơn giá nhập khi giá thị trường giảm
+    CONSTRAINT CK_PhuTung_Gia CHECK (DonGiaNhap > 0 AND DonGiaBan > 0),
     CONSTRAINT CK_PhuTung_SoLuongTon CHECK (SoLuongTon >= 0)
 );
 
-CREATE TABLE ChiTietDichVu (   -- định mức phụ tùng cho mỗi dịch vụ
+CREATE TABLE ChiTietDichVu (
     MaDichVu   VARCHAR(10) NOT NULL,
     MaPhuTung  VARCHAR(10) NOT NULL,
     SoLuong    INT         NOT NULL,
@@ -177,14 +174,14 @@ CREATE TABLE ChiTietPhieuNhap (
     CONSTRAINT CK_CTPN_SoLuong CHECK (SoLuongNhap > 0 AND ThanhTien >= 0)
 );
 
-CREATE TABLE DieuChinhTonKho (   -- lịch sử điều chỉnh tồn khi không sửa/xóa được phiếu nhập
+CREATE TABLE DieuChinhTonKho (
     MaDieuChinh      VARCHAR(10)    NOT NULL,
     MaPhuTung        VARCHAR(10)    NOT NULL,
-    MaNhanVien       VARCHAR(10)    NOT NULL,   -- người điều chỉnh
+    MaNhanVien       VARCHAR(10)    NOT NULL,
     NgayDieuChinh    DATE           NOT NULL,
     SoLuongCu        INT            NOT NULL,
     SoLuongMoi       INT            NOT NULL,
-    DonGiaNhap       DECIMAL(18,0)  NOT NULL,   -- giá nhập tại thời điểm điều chỉnh
+    DonGiaNhap       DECIMAL(18,0)  NOT NULL,
     GiaTriChenhLech  AS ((SoLuongMoi - SoLuongCu) * DonGiaNhap) PERSISTED,
     LyDo             NVARCHAR(255)  NOT NULL,
     CONSTRAINT PK_DieuChinhTonKho PRIMARY KEY (MaDieuChinh),
@@ -193,10 +190,10 @@ CREATE TABLE DieuChinhTonKho (   -- lịch sử điều chỉnh tồn khi không
     CONSTRAINT CK_DCTK_SoLuong CHECK (SoLuongCu >= 0 AND SoLuongMoi >= 0 AND SoLuongMoi <> SoLuongCu)
 );
 
-CREATE TABLE DieuChinhGiaBan (   -- lịch sử điều chỉnh giá bán phụ tùng
+CREATE TABLE DieuChinhGiaBan (
     MaDieuChinhGia   VARCHAR(10)    NOT NULL,
     MaPhuTung        VARCHAR(10)    NOT NULL,
-    MaNhanVien       VARCHAR(10)    NOT NULL,   -- người điều chỉnh
+    MaNhanVien       VARCHAR(10)    NOT NULL,
     NgayDieuChinh    DATE           NOT NULL,
     GiaBanCu         DECIMAL(18,0)  NOT NULL,
     GiaBanMoi        DECIMAL(18,0)  NOT NULL,
@@ -207,11 +204,11 @@ CREATE TABLE DieuChinhGiaBan (   -- lịch sử điều chỉnh giá bán phụ 
     CONSTRAINT CK_DCGB_Gia CHECK (GiaBanCu > 0 AND GiaBanMoi > 0 AND GiaBanMoi <> GiaBanCu)
 );
 
--- ---------- Tiếp nhận - Hóa đơn ----------
+
 CREATE TABLE PhieuTiepNhan (
     MaPhieuTiepNhan  VARCHAR(10)   NOT NULL,
     MaXe             VARCHAR(10)   NOT NULL,
-    MaNhanVien       VARCHAR(10)   NOT NULL,   -- "Mã NV" trên sơ đồ: nhân viên lập phiếu
+    MaNhanVien       VARCHAR(10)   NOT NULL,
     NgayLap          DATE          NOT NULL,
     NgayHen          DATE          NOT NULL,
     TrangThai        NVARCHAR(20)  NOT NULL,
@@ -241,18 +238,17 @@ CREATE TABLE HoaDon (
     NgayThanhToan    DATE           NOT NULL,
     CONSTRAINT PK_HoaDon PRIMARY KEY (MaHoaDon),
     CONSTRAINT FK_HoaDon_PhieuTiepNhan FOREIGN KEY (MaPhieuTiepNhan) REFERENCES PhieuTiepNhan(MaPhieuTiepNhan),
-    CONSTRAINT UQ_HoaDon_PhieuTiepNhan UNIQUE (MaPhieuTiepNhan),   -- 1 phiếu : 1 hóa đơn
+    CONSTRAINT UQ_HoaDon_PhieuTiepNhan UNIQUE (MaPhieuTiepNhan),
     CONSTRAINT CK_HoaDon_Ngay CHECK (NgayThanhToan >= NgayLap),
     CONSTRAINT CK_HoaDon_Tien CHECK (TienThanhToan >= 0)
 );
 GO
 
-/* =====================================================================
-   PHẦN 2: DỮ LIỆU DEMO
-   ===================================================================== */
+
+
 SET NOCOUNT ON;
 
--- ChucVu: 7 dòng
+
 INSERT INTO ChucVu (MaChucVu, TenChucVu, MoTa, HeSoLuong, TienDieuChinh) VALUES
     ('CV01', N'Quản lý cửa hàng', N'Điều hành chung, duyệt phiếu nhập và theo dõi doanh thu', 3.50, 3300000),
     ('CV02', N'Kỹ thuật viên chính', N'Chẩn đoán lỗi, xử lý hạng mục khó, kèm cặp thợ phụ', 2.60, 2400000),
@@ -262,7 +258,7 @@ INSERT INTO ChucVu (MaChucVu, TenChucVu, MoTa, HeSoLuong, TienDieuChinh) VALUES
     ('CV06', N'Thủ kho', N'Quản lý phụ tùng, lập phiếu nhập, kiểm kê tồn kho', 1.80, 1400000),
     ('CV07', N'Kế toán - Thu ngân', N'Lập hóa đơn, thu tiền, đối soát quỹ cuối ngày', 2.00, 1100000);
 
--- KhoanDieuChinh: 10 dòng
+
 INSERT INTO KhoanDieuChinh (MaKhoanDieuChinh, TenKhoanDieuChinh, SoTien) VALUES
     ('KDC01', N'Phụ cấp trách nhiệm quản lý', 2000000),
     ('KDC02', N'Phụ cấp tay nghề kỹ thuật', 1000000),
@@ -275,7 +271,7 @@ INSERT INTO KhoanDieuChinh (MaKhoanDieuChinh, TenKhoanDieuChinh, SoTien) VALUES
     ('KDC09', N'Phạt chênh lệch quỹ tiền mặt', -200000),
     ('KDC10', N'Phụ cấp độc hại (dầu nhớt, hóa chất)', 400000);
 
--- ChucVuDieuChinh: 35 dòng
+
 INSERT INTO ChucVuDieuChinh (MaChucVu, MaKhoanDieuChinh) VALUES
     ('CV01', 'KDC01'),
     ('CV01', 'KDC03'),
@@ -313,7 +309,7 @@ INSERT INTO ChucVuDieuChinh (MaChucVu, MaKhoanDieuChinh) VALUES
     ('CV07', 'KDC07'),
     ('CV07', 'KDC09');
 
--- NhanVien: 22 dòng
+
 INSERT INTO NhanVien (MaNhanVien, MaChucVu, HoTen, SoDienThoai, Luong, TenDangNhap, MatKhau, TrangThai) VALUES
     ('NV001', 'CV01', N'Trần Văn Nam', '0351104489', 15300000, 'namtv', '8D969EEF6ECAD3C29A3A629280E686CF0C3F5D5A86AFF3CA12020C923ADC6C92', 1),
     ('NV002', 'CV02', N'Tô Công Phong', '0398728274', 11700000, 'phongtc', '8D969EEF6ECAD3C29A3A629280E686CF0C3F5D5A86AFF3CA12020C923ADC6C92', 1),
@@ -337,15 +333,15 @@ INSERT INTO NhanVien (MaNhanVien, MaChucVu, HoTen, SoDienThoai, Luong, TenDangNh
     ('NV020', 'CV07', N'Đặng Bảo Vy', '0399685154', 9100000, 'vydb', '8D969EEF6ECAD3C29A3A629280E686CF0C3F5D5A86AFF3CA12020C923ADC6C92', 1),
     ('NV021', 'CV07', N'Mai Thu Thảo', '0831125191', 8500000, 'thaomt', '8D969EEF6ECAD3C29A3A629280E686CF0C3F5D5A86AFF3CA12020C923ADC6C92', 1),
     ('NV022', 'CV03', N'Đặng Thành Long', '0774040369', 10000000, 'longdt', '8D969EEF6ECAD3C29A3A629280E686CF0C3F5D5A86AFF3CA12020C923ADC6C92', 0),
-    ('NV023', 'CV01', N'Tài khoản Demo', '0900000000', 15000000, 'demo', '8D969EEF6ECAD3C29A3A629280E686CF0C3F5D5A86AFF3CA12020C923ADC6C92', 1);   -- tài khoản demo quyền quản lý: demo / 123456
+    ('NV023', 'CV01', N'Tài khoản Demo', '0900000000', 15000000, 'demo', '8D969EEF6ECAD3C29A3A629280E686CF0C3F5D5A86AFF3CA12020C923ADC6C92', 1);
 
--- CaLam: 3 dòng
+
 INSERT INTO CaLam (MaCaLam, ThoiGianCaLam, ThoiGianBatDau, ThoiGianKetThuc) VALUES
     ('CA01', 4.50, '07:30:00', '12:00:00'),
     ('CA02', 4.50, '13:00:00', '17:30:00'),
     ('CA03', 3.50, '17:30:00', '21:00:00');
 
--- ChiTietCaLam: 2854 dòng
+
 INSERT INTO ChiTietCaLam (MaNhanVien, MaCaLam, NgayLam, TongThoiGianLamThucTe) VALUES
     ('NV001', 'CA01', '2026-08-01', 4.75),
     ('NV001', 'CA02', '2026-08-01', 4.50),
@@ -3207,7 +3203,7 @@ INSERT INTO ChiTietCaLam (MaNhanVien, MaCaLam, NgayLam, TongThoiGianLamThucTe) V
     ('NV021', 'CA01', '2026-10-27', 4.00),
     ('NV021', 'CA02', '2026-10-27', 4.50);
 
--- KhachHang: 45 dòng
+
 INSERT INTO KhachHang (MaKhachHang, TenKhachHang, SoDienThoai) VALUES
     ('KH001', N'Tô Minh Châu', '0885996138'),
     ('KH002', N'Cao Minh Toàn', '0394464605'),
@@ -3255,7 +3251,7 @@ INSERT INTO KhachHang (MaKhachHang, TenKhachHang, SoDienThoai) VALUES
     ('KH044', N'Bùi Văn Trung', '0944993524'),
     ('KH045', N'Cao Phương Giang', '0331866179');
 
--- Xe: 114 dòng
+
 INSERT INTO Xe (MaXe, MaKhachHang, BienXe, LoaiXe, HangSanXuat, MauSac) VALUES
     ('XE001', 'KH020', '15H6-882.37', 'Air Blade 125', 'Honda', N'Đỏ'),
     ('XE002', 'KH002', '29K5-425.50', 'Attila 50', 'SYM', N'Xanh rêu'),
@@ -3372,7 +3368,7 @@ INSERT INTO Xe (MaXe, MaKhachHang, BienXe, LoaiXe, HangSanXuat, MauSac) VALUES
     ('XE113', 'KH042', '15A2-527.30', 'Wave Alpha 110', 'Honda', N'Đỏ'),
     ('XE114', 'KH003', '34F1-156.41', 'Vision', 'Honda', N'Bạc');
 
--- ChiTietPhanCong: 153 dòng
+
 INSERT INTO ChiTietPhanCong (MaNhanVien, MaXe, ThoiGianBatDau, ThoiGianHoanThanh) VALUES
     ('NV006', 'XE001', '2026-08-01T10:55:00', '2026-08-01T11:50:00'),
     ('NV013', 'XE001', '2026-08-01T10:55:00', '2026-08-01T11:45:00'),
@@ -3528,7 +3524,7 @@ INSERT INTO ChiTietPhanCong (MaNhanVien, MaXe, ThoiGianBatDau, ThoiGianHoanThanh
     ('NV010', 'XE107', '2026-10-21T15:35:00', '2026-10-21T16:55:00'),
     ('NV003', 'XE108', '2026-10-22T15:45:00', '2026-10-22T16:20:00');
 
--- DichVu: 22 dòng
+
 INSERT INTO DichVu (MaDichVu, TenDichVu, MoTa, ThanhTienDichVu, TrangThai) VALUES
     ('DV01', N'Thay nhớt máy (Castrol Power1)', N'Xả nhớt cũ, thay nhớt mới, kiểm tra rò rỉ', 140000, 1),
     ('DV02', N'Thay nhớt máy cao cấp (Motul 3100)', N'Thay nhớt tổng hợp cao cấp cho xe chạy nhiều', 160000, 1),
@@ -3553,7 +3549,7 @@ INSERT INTO DichVu (MaDichVu, TenDichVu, MoTa, ThanhTienDichVu, TrangThai) VALUE
     ('DV21', N'Vá lốp không săm', N'Vá lốp bằng nấm vá, bơm hơi kiểm tra', 50000, 1),
     ('DV22', N'Sơn dặm - đánh bóng dàn áo', N'Sơn dặm vết xước, đánh bóng dàn áo', 350000, 0);
 
--- NhaCungCap: 8 dòng
+
 INSERT INTO NhaCungCap (MaNhaCungCap, TenNhaCungCap, SoDienThoai, DiaChi) VALUES
     ('NCC01', N'Công ty TNHH Phụ tùng Minh Phát', '02251800617', N'125 Lạch Tray, Ngô Quyền, Hải Phòng'),
     ('NCC02', N'Công ty TNHH Dầu nhớt An Khang', '02253786292', N'48 Tô Hiệu, Lê Chân, Hải Phòng'),
@@ -3564,7 +3560,7 @@ INSERT INTO NhaCungCap (MaNhaCungCap, TenNhaCungCap, SoDienThoai, DiaChi) VALUES
     ('NCC07', N'Đại lý Phụ tùng Ngọc Lan', '02256735854', N'203 Hai Bà Trưng, Lê Chân, Hải Phòng'),
     ('NCC08', N'Công ty TNHH Hóa chất Bảo dưỡng Việt Tiến', '02251447679', N'9 Lê Hồng Phong, Hải An, Hải Phòng');
 
--- PhuTung: 30 dòng
+
 INSERT INTO PhuTung (MaPhuTung, MaNhaCungCap, TenPhuTung, DonGiaNhap, DonGiaBan, SoLuongTon, HanSuDung, TrangThai) VALUES
     ('PT001', 'NCC02', N'Nhớt Castrol Power1 4T 10W-40 0.8L', 95000, 125000, 24, '2028-06-30', 1),
     ('PT002', 'NCC06', N'Nhớt Castrol Power1 4T 10W-40 0.8L', 92000, 125000, 23, '2028-12-31', 1),
@@ -3597,7 +3593,7 @@ INSERT INTO PhuTung (MaPhuTung, MaNhaCungCap, TenPhuTung, DonGiaNhap, DonGiaBan,
     ('PT029', 'NCC07', N'Nhớt Yamalube 4AT 10W-40 0.8L', 88000, 115000, 15, '2028-11-30', 1),
     ('PT030', 'NCC06', N'Đèn pha LED Honda Vision', 350000, 450000, 6, '2030-12-31', 0);
 
--- ChiTietDichVu: 22 dòng
+
 INSERT INTO ChiTietDichVu (MaDichVu, MaPhuTung, SoLuong) VALUES
     ('DV01', 'PT001', 1),
     ('DV02', 'PT003', 1),
@@ -3622,7 +3618,7 @@ INSERT INTO ChiTietDichVu (MaDichVu, MaPhuTung, SoLuong) VALUES
     ('DV18', 'PT023', 1),
     ('DV19', 'PT024', 1);
 
--- PhieuNhap: 24 dòng
+
 INSERT INTO PhieuNhap (MaPhieuNhap, MaNhanVienNhap, NgayNhap, GhiChu, TongTienNhap) VALUES
     ('PN001', 'NV018', '2026-07-20', N'Nhập hàng đợt tháng 8 từ Công ty TNHH Phụ tùng Minh Phát', 2836000),
     ('PN002', 'NV018', '2026-07-21', N'Nhập hàng đợt tháng 8 từ Cửa hàng Phụ tùng Tuấn Hưng', 2317000),
@@ -3649,7 +3645,7 @@ INSERT INTO PhieuNhap (MaPhieuNhap, MaNhanVienNhap, NgayNhap, GhiChu, TongTienNh
     ('PN023', 'NV018', '2026-09-29', N'Nhập hàng đợt tháng 10 từ Đại lý Lốp xe Hồng Hà', 8820000),
     ('PN024', 'NV019', '2026-09-30', N'Nhập hàng đợt tháng 10 từ Cửa hàng Phụ tùng Tuấn Hưng', 1878000);
 
--- ChiTietPhieuNhap: 88 dòng
+
 INSERT INTO ChiTietPhieuNhap (MaPhieuNhap, MaPhuTung, SoLuongNhap, ThanhTien) VALUES
     ('PN001', 'PT004', 13, 286000),
     ('PN001', 'PT005', 16, 1360000),
@@ -3740,7 +3736,7 @@ INSERT INTO ChiTietPhieuNhap (MaPhieuNhap, MaPhuTung, SoLuongNhap, ThanhTien) VA
     ('PN024', 'PT009', 6, 330000),
     ('PN024', 'PT010', 11, 495000);
 
--- PhieuTiepNhan: 114 dòng
+
 INSERT INTO PhieuTiepNhan (MaPhieuTiepNhan, MaXe, MaNhanVien, NgayLap, NgayHen, TrangThai) VALUES
     ('PTN001', 'XE001', 'NV015', '2026-08-01', '2026-08-02', N'Hoàn thành'),
     ('PTN002', 'XE002', 'NV017', '2026-08-02', '2026-08-02', N'Hoàn thành'),
@@ -3857,7 +3853,7 @@ INSERT INTO PhieuTiepNhan (MaPhieuTiepNhan, MaXe, MaNhanVien, NgayLap, NgayHen, 
     ('PTN113', 'XE113', 'NV015', '2026-10-27', '2026-10-28', N'Chờ sửa'),
     ('PTN114', 'XE114', 'NV017', '2026-10-27', '2026-10-30', N'Chờ sửa');
 
--- ChiTietPhieuTiepNhan: 241 dòng
+
 INSERT INTO ChiTietPhieuTiepNhan (MaPhieuTiepNhan, MaDichVu, SoLuong, ThanhTien) VALUES
     ('PTN001', 'DV07', 1, 120000),
     ('PTN001', 'DV21', 2, 100000),
@@ -4101,7 +4097,7 @@ INSERT INTO ChiTietPhieuTiepNhan (MaPhieuTiepNhan, MaDichVu, SoLuong, ThanhTien)
     ('PTN114', 'DV15', 1, 380000),
     ('PTN114', 'DV20', 1, 40000);
 
--- HoaDon: 106 dòng
+
 INSERT INTO HoaDon (MaHoaDon, MaPhieuTiepNhan, TienThanhToan, NgayLap, NgayThanhToan) VALUES
     ('HD001', 'PTN001', 220000, '2026-08-01', '2026-08-01'),
     ('HD002', 'PTN002', 205000, '2026-08-02', '2026-08-02'),
@@ -4210,9 +4206,7 @@ INSERT INTO HoaDon (MaHoaDon, MaPhieuTiepNhan, TienThanhToan, NgayLap, NgayThanh
     ('HD105', 'PTN107', 445000, '2026-10-21', '2026-10-21'),
     ('HD106', 'PTN108', 520000, '2026-10-22', '2026-10-22');
 
--- ---------- Dữ liệu demo kho: phiếu nhập sửa/xóa được, điều chỉnh tồn, điều chỉnh giá bán ----------
--- PT031, PT032 (phiếu PN025): chưa vào dịch vụ, chưa điều chỉnh => sửa/xóa phiếu được
--- PT033 (phiếu PN026): chưa vào dịch vụ nhưng đã điều chỉnh giá bán => sửa được, xóa bị chặn
+
 INSERT INTO PhuTung (MaPhuTung, MaNhaCungCap, TenPhuTung, DonGiaNhap, DonGiaBan, SoLuongTon, HanSuDung, TrangThai) VALUES
     ('PT031', 'NCC01', N'Gương chiếu hậu Honda Vision (cặp)', 70000, 95000, 10, '2031-12-31', 1),
     ('PT032', 'NCC01', N'Bóng đèn xi nhan LED 12V Honda', 25000, 40000, 20, '2031-12-31', 1),
@@ -4227,7 +4221,7 @@ INSERT INTO ChiTietPhieuNhap (MaPhieuNhap, MaPhuTung, SoLuongNhap, ThanhTien) VA
     ('PN025', 'PT032', 20, 500000),
     ('PN026', 'PT033', 15, 450000);
 
--- Kiểm kê cuối tháng 10 (thủ kho NV018, NV019): SoLuongMoi = số tồn hiện tại của phụ tùng
+
 INSERT INTO DieuChinhTonKho (MaDieuChinh, MaPhuTung, MaNhanVien, NgayDieuChinh, SoLuongCu, SoLuongMoi, DonGiaNhap, LyDo) VALUES
     ('DC001', 'PT001', 'NV018', '2026-10-26', 26, 24, 95000, N'Kiểm kê cuối tháng 10: vỡ 2 chai nhớt khi xếp kho'),
     ('DC002', 'PT024', 'NV018', '2026-10-26', 18, 16, 55000, N'Kiểm kê cuối tháng 10: 2 chai dầu phanh bị rò rỉ, hủy bỏ'),
@@ -4235,7 +4229,7 @@ INSERT INTO DieuChinhTonKho (MaDieuChinh, MaPhuTung, MaNhanVien, NgayDieuChinh, 
     ('DC004', 'PT011', 'NV018', '2026-10-27', 16, 15, 520000, N'Lốp bị lỗi sản xuất, trả lại nhà cung cấp'),
     ('DC005', 'PT017', 'NV019', '2026-10-27', 19, 18, 280000, N'Ắc quy hỏng khi kiểm tra sạc');
 
--- Quản lý NV001 chỉnh giá bán: GiaBanMoi = giá bán hiện tại của phụ tùng
+
 INSERT INTO DieuChinhGiaBan (MaDieuChinhGia, MaPhuTung, MaNhanVien, NgayDieuChinh, GiaBanCu, GiaBanMoi, LyDo) VALUES
     ('DG001', 'PT011', 'NV001', '2026-09-01', 620000, 650000, N'Nhà cung cấp tăng giá lốp Michelin'),
     ('DG002', 'PT001', 'NV001', '2026-09-15', 120000, 125000, N'Điều chỉnh theo giá thị trường'),
@@ -4244,14 +4238,13 @@ INSERT INTO DieuChinhGiaBan (MaDieuChinhGia, MaPhuTung, MaNhanVien, NgayDieuChin
     ('DG005', 'PT033', 'NV001', '2026-10-27', 55000, 50000, N'Nhập nhầm giá bán khi lập phiếu PN026');
 GO
 
-/* =====================================================================
-   PHẦN 3: KIỂM TRA SỐ DÒNG + TRUY VẤN DEMO
-   ===================================================================== */
+
+
 SELECT t.name AS Bang, SUM(p.rows) AS SoDong
 FROM sys.tables t JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1)
 GROUP BY t.name ORDER BY t.name;
 
--- 1. Lịch sử sửa xe của một khách (tra theo số điện thoại)
+
 DECLARE @SDT VARCHAR(15) = '0884647576';
 SELECT kh.TenKhachHang, x.BienXe, x.HangSanXuat, x.LoaiXe, ptn.MaPhieuTiepNhan, ptn.NgayLap,
        ptn.TrangThai, dv.TenDichVu, ct.SoLuong, ct.ThanhTien
@@ -4263,20 +4256,20 @@ JOIN DichVu dv                ON dv.MaDichVu = ct.MaDichVu
 WHERE kh.SoDienThoai = @SDT
 ORDER BY ptn.NgayLap, ptn.MaPhieuTiepNhan;
 
--- 2. Doanh thu theo tháng
+
 SELECT YEAR(NgayThanhToan) AS Nam, MONTH(NgayThanhToan) AS Thang,
        COUNT(*) AS SoHoaDon, SUM(TienThanhToan) AS DoanhThu
 FROM HoaDon
 GROUP BY YEAR(NgayThanhToan), MONTH(NgayThanhToan)
 ORDER BY Nam, Thang;
 
--- 3. Phụ tùng đang kinh doanh sắp hết hàng (tồn <= 5)
+
 SELECT pt.MaPhuTung, pt.TenPhuTung, ncc.TenNhaCungCap, pt.SoLuongTon, pt.HanSuDung
 FROM PhuTung pt JOIN NhaCungCap ncc ON ncc.MaNhaCungCap = pt.MaNhaCungCap
 WHERE pt.TrangThai = 1 AND pt.SoLuongTon <= 5
 ORDER BY pt.SoLuongTon;
 
--- 4. Tổng giờ làm thực tế tháng 10/2026 theo nhân viên
+
 SELECT nv.MaNhanVien, nv.HoTen, cv.TenChucVu, COUNT(*) AS SoCa, SUM(ct.TongThoiGianLamThucTe) AS TongGio
 FROM ChiTietCaLam ct
 JOIN NhanVien nv ON nv.MaNhanVien = ct.MaNhanVien
@@ -4285,14 +4278,14 @@ WHERE ct.NgayLam >= '2026-10-01' AND ct.NgayLam < '2026-11-01'
 GROUP BY nv.MaNhanVien, nv.HoTen, cv.TenChucVu
 ORDER BY TongGio DESC;
 
--- 5. Kỹ thuật viên sửa nhiều xe nhất
+
 SELECT nv.MaNhanVien, nv.HoTen, COUNT(*) AS SoXe,
        SUM(DATEDIFF(MINUTE, pc.ThoiGianBatDau, pc.ThoiGianHoanThanh)) AS TongPhut
 FROM ChiTietPhanCong pc JOIN NhanVien nv ON nv.MaNhanVien = pc.MaNhanVien
 GROUP BY nv.MaNhanVien, nv.HoTen
 ORDER BY SoXe DESC;
 
--- 6. Dịch vụ được dùng nhiều nhất
+
 SELECT dv.TenDichVu, SUM(ct.SoLuong) AS SoLan, SUM(ct.ThanhTien) AS DoanhThu
 FROM ChiTietPhieuTiepNhan ct
 JOIN DichVu dv ON dv.MaDichVu = ct.MaDichVu
@@ -4334,4 +4327,3 @@ UPDATE dbo.ChucVu SET TenChucVu = N'Thu ngân' WHERE MaChucVu = 'CV07';
 COMMIT TRANSACTION;
 
 GO
-

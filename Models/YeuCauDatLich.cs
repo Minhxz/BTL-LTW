@@ -1,9 +1,10 @@
-using System.Text.Json.Serialization;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 using QLyCuaHangSuaXe.LopDungChung;
 using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Models;
+
 public sealed class YeuCauDatLich
 {
     [Required(ErrorMessage = "Vui lòng nhập họ tên."), StringLength(100, MinimumLength = 2)]

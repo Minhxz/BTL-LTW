@@ -1,34 +1,42 @@
-using System.Text.Json.Serialization;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using QLyCuaHangSuaXe.LopDungChung;
 using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Controllers;
-// Bản nháp thuộc phiên trình duyệt hiện tại và hết hạn sau 30 phút không hoạt động.
+
 [ApiController, Route("api/appointments/draft")]
 public sealed class BanNhapController : ControllerBase
 {
-    private const string SessionKey = "BanNhapDatLich";
+    private const string KhoaPhienBanNhap = "BanNhapDatLich";
+
     [HttpGet, ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public IActionResult DocBanNhap()
     {
-        var json = HttpContext.Session.GetString(SessionKey);
-        return Ok(new { draft = json is null ? null : JsonSerializer.Deserialize<BanNhapDatLich>(json) });
+        var chuoiJson = HttpContext.Session.GetString(KhoaPhienBanNhap);
+        return Ok(
+            new
+            {
+                draft = chuoiJson is null
+                    ? null
+                    : JsonSerializer.Deserialize<BanNhapDatLich>(chuoiJson),
+            }
+        );
     }
 
     [HttpPut]
-    public IActionResult LuuBanNhap(BanNhapDatLich draft)
+    public IActionResult LuuBanNhap(BanNhapDatLich banNhap)
     {
-        HttpContext.Session.SetString(SessionKey, JsonSerializer.Serialize(draft));
+        HttpContext.Session.SetString(KhoaPhienBanNhap, JsonSerializer.Serialize(banNhap));
         return Ok(new { message = "Đã lưu bản nháp trong phiên làm việc này." });
     }
 
     [HttpDelete]
     public IActionResult XoaBanNhap()
     {
-        HttpContext.Session.Remove(SessionKey);
+        HttpContext.Session.Remove(KhoaPhienBanNhap);
         return NoContent();
     }
 }

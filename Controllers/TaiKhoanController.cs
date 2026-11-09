@@ -4,15 +4,18 @@ using QLyCuaHangSuaXe.LopDungChung;
 using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.Controllers;
+
 public class TaiKhoanController : Controller
 {
     [AllowAnonymous]
     [ActionName("Login")]
-    public IActionResult DangNhap(string? returnUrl = null)
+    public IActionResult DangNhap([FromQuery(Name = "ReturnUrl")] string? duongDanQuayLai = null)
     {
         if (User.Identity?.IsAuthenticated == true)
             return RedirectToAction("Workflow", "QuanLy");
-        ViewData["ReturnUrl"] = Url.IsLocalUrl(returnUrl) ? returnUrl : "/Management/Workflow";
+        ViewData["ReturnUrl"] = Url.IsLocalUrl(duongDanQuayLai)
+            ? duongDanQuayLai
+            : "/Management/Workflow";
         return View("DangNhap");
     }
 

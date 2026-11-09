@@ -1,37 +1,46 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Globalization;
 using System.Security.Claims;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QLyCuaHangSuaXe.LopDungChung;
 using QLyCuaHangSuaXe.Models;
 
 namespace QLyCuaHangSuaXe.LopDungChung;
+
 public static class PhanTrang
 {
-    public static void KiemTra(int page, int size, string? q = null)
+    public static void KiemTra(int trang, int kichThuoc, string? tuKhoa = null)
     {
-        if (page < 1 || page > 100000 || size < 1 || size > 100 || q?.Length > 150)
+        if (trang < 1 || trang > 100000 || kichThuoc < 1 || kichThuoc > 100 || tuKhoa?.Length > 150)
             throw new ArgumentException("Bộ lọc hoặc số trang không hợp lệ.");
     }
 
-    public static (DateTime? From, DateTime? To) KhoangNgay(string? from, string? to)
+    public static (DateTime? From, DateTime? To) KhoangNgay(string? ngayBatDau, string? ngayKetThuc)
     {
-        DateTime? DocDuLieuNhap(string? v)
+        DateTime? DocDuLieuNhap(string? giaTri)
         {
-            if (string.IsNullOrWhiteSpace(v))
+            if (string.IsNullOrWhiteSpace(giaTri))
                 return null;
-            if (!DateTime.TryParseExact(v, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+            if (
+                !DateTime.TryParseExact(
+                    giaTri,
+                    "yyyy-MM-dd",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var date
+                )
+            )
                 throw new ArgumentException("Ngày lọc không hợp lệ.");
             return date;
         }
 
-        var a = DocDuLieuNhap(from);
-        var b = DocDuLieuNhap(to);
-        if (a > b)
+        var kyTuThuNhat = DocDuLieuNhap(ngayBatDau);
+        var kyTuThuHai = DocDuLieuNhap(ngayKetThuc);
+        if (kyTuThuNhat > kyTuThuHai)
             throw new ArgumentException("Ngày bắt đầu không được sau ngày kết thúc.");
-        return (a, b);
+        return (kyTuThuNhat, kyTuThuHai);
     }
 }

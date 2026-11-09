@@ -1,5 +1,3 @@
--- Additive, repeatable web metadata only. Run against the EXISTING QuanLySuaXe.
--- The 20 business tables and their data are never recreated by the web application.
 SET XACT_ABORT ON;
 IF OBJECT_ID(N'dbo.WebDichVu', N'U') IS NULL
 CREATE TABLE dbo.WebDichVu (

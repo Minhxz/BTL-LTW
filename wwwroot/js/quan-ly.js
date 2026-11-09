@@ -1,1364 +1,1526 @@
 (() => {
-  "use strict";
-  const api = window.GiaoTiepMayChu.request,
-    content = document.querySelector("#content"),
-    dialog = document.querySelector("#editor"),
-    form = document.querySelector("#editor-form"),
-    body = document.querySelector("#editor-body"),
-    save = document.querySelector("#save-editor"),
-    error = document.querySelector("#editor-error");
-  const role = document.body.dataset.role,
-    manager = role === "Manager",
-    cashier = role === "Cashier",
-    mechanic = role === "Mechanic",
-    canReceive = manager || cashier;
-  const esc = (x) =>
-    String(x ?? "").replace(
-      /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[c],
-    );
-  const money = (x) =>
-    new Intl.NumberFormat("vi-VN", {
-      style: "currency",
-      currency: "VND",
-      maximumFractionDigits: 0,
-    }).format(Number(x) || 0);
-  const date = (x) =>
-    x
-      ? new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Bangkok" }).format(
-          new Date(String(x).slice(0, 10) + "T12:00:00+07:00"),
-        )
-      : "—";
-  const today = () =>
-    new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Bangkok" }).format(
-      new Date(),
-    );
-  let specs = [],
-    section = "dashboard",
-    page = 1,
-    q = "",
-    status = "",
-    from = "",
-    to = "",
-    current = [],
-    onSave,
-    loadingId = 0,
-    toastTimer,
-    dialogBusy = false;
-  const names = {
-    dashboard: "Tổng quan cửa hàng",
-    bookings: "Lịch hẹn online",
-    jobs: "Tiếp nhận & sửa chữa",
-    purchases: "Phiếu nhập kho",
-    stockHistory: "Lịch sử điều chỉnh",
-    invoices: "Hóa đơn thanh toán",
-    reports: "Báo cáo doanh thu",
-    myAttendance: "Công cá nhân",
-    profile: "Tài khoản cá nhân",
-  };
-  // Màu nhãn trạng thái: xanh lá = xong, vàng = đang chờ, xanh dương = đang sửa, đỏ = đã hủy.
-  function mauTrangThai(trangThai) {
-    if (["Hoàn thành", "Đã tiếp nhận"].includes(trangThai)) return "green";
-    if (["Chờ sửa", "Chờ xác nhận"].includes(trangThai)) return "amber";
-    if (trangThai === "Đang sửa") return "blue";
-    if (trangThai === "Đã hủy") return "red";
-    return "";
-  }
-  const badge = (s) =>
-    `<span class="badge ${mauTrangThai(s)}">${esc(s)}</span>`;
-  const btn = (text, action, id = "", style = "secondary small") =>
-    `<button type="button" class="button ${style}" data-action="${esc(action)}" data-id="${esc(id)}">${esc(text)}</button>`;
-  const notice = (text) => {
-    const el = document.querySelector("#toast");
-    el.textContent = text;
-    el.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (el.hidden = true), 4500);
-  };
-  const options = async (kind, value = "", optional = true) => {
-    const rows = await api("/api/catalog/options/" + kind);
-    return (
-      (optional ? '<option value="">Chọn…</option>' : "") +
-      rows
-        .map(
-          (x) =>
-            `<option value="${esc(x.id)}" ${String(x.id) === String(value) ? "selected" : ""}>${esc(x.label)} [${esc(x.id)}]</option>`,
-        )
-        .join("")
-    );
-  };
-  const field = (name, label, type = "text", value = "", extra = "") =>
-    `<label class="field"><span>${esc(label)}</span><input name="${esc(name)}" type="${type}" value="${esc(value)}" ${extra}/></label>`;
-  const selectField = (name, label, html, extra = "required") =>
-    `<label class="field"><span>${esc(label)}</span><select name="${name}" ${extra}>${html}</select></label>`;
-  function moHopThoai(title, html, handler = null, label = "Lưu thông tin") {
-    document.querySelector("#editor-title").textContent = title;
-    body.innerHTML = html;
-    error.textContent = "";
-    onSave = handler;
-    save.hidden = !handler;
-    save.textContent = label;
-    save.disabled = false;
-    if (!dialog.open) dialog.showModal();
-  }
-  function dongHopThoai() {
-    if (!dialogBusy) dialog.close();
-  }
-  document.querySelector("#close-editor").onclick = dongHopThoai;
-  document.querySelector("#cancel-editor").onclick = dongHopThoai;
-  dialog.addEventListener("cancel", (event) => {
-    if (dialogBusy) event.preventDefault();
-  });
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!onSave || dialogBusy || !form.reportValidity()) return;
-    error.textContent = "";
-    save.disabled = true;
-    dialogBusy = true;
-    const handler = onSave;
-    try {
-      const message = await handler(new FormData(form));
-      dialogBusy = false;
-      dialog.close();
-      notice(message || "Đã lưu thông tin.");
-      await taiDuLieu();
-    } catch (e) {
-      error.textContent = e.message;
-    } finally {
-      save.disabled = false;
-      dialogBusy = false;
-    }
-  });
-  document.querySelector("#menu-toggle").onclick = () =>
-    document.querySelector("#sidebar").classList.toggle("open");
-  document.querySelector("#logout").onclick = async () => {
-    try {
-      await api("/api/auth/logout", { method: "POST" });
-      location.href = "/Account/Login";
-    } catch (e) {
-      notice(e.message);
-    }
-  };
-  function hienMenu() {
-    const groups = [
-      [
-        "TỔNG QUAN",
-        [
-          ["dashboard", "◫"],
-          ...(canReceive ? [["bookings", "◷"]] : []),
-          ...(canReceive || mechanic ? [["jobs", "▱"]] : []),
-        ],
-      ],
-      [
-        "KHÁCH HÀNG & DỊCH VỤ",
-        ["customers", "services", "serviceParts"].map((x) => [
-          x,
-          "◇",
-        ]),
-      ],
-      [
-        "KHO & NHÀ CUNG CẤP",
-        [
-          "parts",
-          "suppliers",
-          ...(manager ? ["purchases", "stockHistory"] : []),
-        ].map((x) => [x, "▦"]),
-      ],
-      [
-        "NHÂN SỰ",
-        [
-          "employees",
-          "roles",
-          "adjustments",
-          "roleAdjustments",
-          "shifts",
-          "attendance",
-          "myAttendance",
-        ].map((x) => [x, "♧"]),
-      ],
-      [
-        "TÀI CHÍNH",
-        [
-          ...(canReceive ? [["invoices", "▤"]] : []),
-          ...(manager ? [["reports", "◴"]] : []),
-          ["profile", "⚙"],
-        ],
-      ],
+    "use strict";
+    const giaoTiep = window.GiaoTiepMayChu.guiYeuCau,
+        noiDungTrang = document.querySelector("#content"),
+        hopThoai = document.querySelector("#editor"),
+        bieuMau = document.querySelector("#editor-form"),
+        noiDungHopThoai = document.querySelector("#editor-body"),
+        nutLuu = document.querySelector("#save-editor"),
+        loi = document.querySelector("#editor-error");
+    const vaiTro = document.body.dataset.role,
+        laQuanLy = vaiTro === "Manager",
+        laThuNgan = vaiTro === "Cashier",
+        laTho = vaiTro === "Mechanic",
+        duocTiepNhan = laQuanLy || laThuNgan;
+    const maHoaHtml = (phanTuXet) =>
+        String(phanTuXet ?? "").replace(
+            /[&<>"']/g,
+            (kyTu) =>
+                ({
+                    "&": "&amp;",
+                    "<": "&lt;",
+                    ">": "&gt;",
+                    '"': "&quot;",
+                    "'": "&#39;",
+                })[kyTu],
+        );
+    const dinhDangTien = (phanTuXet) =>
+        new Intl.NumberFormat("vi-VN", {
+            style: "currency",
+            currency: "VND",
+            maximumFractionDigits: 0,
+        }).format(Number(phanTuXet) || 0);
+    const dinhDangNgay = (phanTuXet) =>
+        phanTuXet
+            ? new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Bangkok" }).format(
+                  new Date(String(phanTuXet).slice(0, 10) + "T12:00:00+07:00"),
+              )
+            : "—";
+    const homNay = () =>
+        new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Bangkok" }).format(new Date());
+    let cacCauHinhDanhMuc = [],
+        mucDangChon = "dashboard",
+        trang = 1,
+        tuKhoa = "",
+        trangThaiLoc = "",
+        tuNgay = "",
+        denNgay = "",
+        cacDongHienTai = [],
+        khiLuu,
+        maLanTai = 0,
+        boHenThongBao,
+        dangLuuHopThoai = false;
+    const cacTenMuc = {
+        dashboard: "Tổng quan cửa hàng",
+        bookings: "Lịch hẹn online",
+        jobs: "Tiếp nhận & sửa chữa",
+        purchases: "Phiếu nhập kho",
+        stockHistory: "Lịch sử điều chỉnh",
+        invoices: "Hóa đơn thanh toán",
+        reports: "Báo cáo doanh thu",
+        myAttendance: "Công cá nhân",
+        profile: "Tài khoản cá nhân",
+    };
+    const cacNhomNhanSu = [
+        { title: "Nhân viên & chức vụ", items: ["employees", "roles"] },
+        { title: "Ca làm & chấm công", items: ["attendance", "shifts", "myAttendance"] },
+        { title: "Thưởng / phạt", items: ["adjustments", "roleAdjustments"] },
     ];
-    document.querySelector("#navigation").innerHTML = groups
-      .map(([label, items]) => {
-        items = items.filter(
-          ([id]) => names[id] || specs.some((x) => x.id === id),
-        );
-        if (!items.length) return "";
-
-        const cacMuc = items.map(([id, icon]) => {
-          const tenMuc = names[id] || specs.find((x) => x.id === id)?.title;
-          const dangChon = id === section ? "active" : "";
-          return `<a class="nav-item ${dangChon}" href="#${id}"><i>${icon}</i>${esc(tenMuc)}</a>`;
+    const duocMoMuc = (maBanGhi) =>
+        cacTenMuc[maBanGhi] || cacCauHinhDanhMuc.some((phanTuXet) => phanTuXet.id === maBanGhi);
+    const layNhomNhanSu = () => cacNhomNhanSu.find((nhom) => nhom.items.includes(mucDangChon));
+    function hienMucNhanSu() {
+        const nhom = layNhomNhanSu();
+        if (!nhom) return "";
+        const cacLienKet = nhom.items.filter(duocMoMuc).map((maBanGhi) => {
+            const tieuDeNhap =
+                cacTenMuc[maBanGhi] ||
+                cacCauHinhDanhMuc.find((phanTuXet) => phanTuXet.id === maBanGhi)?.title;
+            return `<a class="personnel-tab ${maBanGhi === mucDangChon ? "active" : ""}" href="#${maBanGhi}"${maBanGhi === mucDangChon ? ' aria-current="page"' : ""}>${maHoaHtml(tieuDeNhap)}</a>`;
         });
-
-        return `<div class="nav-label">${label}</div>` + cacMuc.join("");
-      })
-      .join("");
-  }
-  function taoBoLoc({
-    dates = false,
-    states = false,
-    add = false,
-    extra = "",
-    placeholder = "Tìm mã, tên hoặc thông tin…",
-  } = {}) {
-    const oTimKiem = `<input name="q" class="search" placeholder="${esc(placeholder)}" aria-label="Tìm kiếm" value="${esc(q)}" maxlength="150"/>`;
-
-    let oTrangThai = "";
-    if (states) {
-      const cacTrangThai = ["Chờ sửa", "Đang sửa", "Hoàn thành", "Đã hủy"]
-        .map((s) => `<option ${s === status ? "selected" : ""}>${s}</option>`)
-        .join("");
-      oTrangThai = `<select name="status" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${cacTrangThai}</select>`;
+        return `<nav class="personnel-tabs" aria-label="${maHoaHtml(nhom.title)}">${cacLienKet.join("")}</nav>`;
     }
-
-    let oNgay = "";
-    if (dates) {
-      oNgay =
-        `<input name="from" aria-label="Từ ngày" type="date" value="${from}"/>` +
-        `<input name="to" aria-label="Đến ngày" type="date" value="${to}"/>`;
+    function mauTrangThai(trangThai) {
+        if (["Hoàn thành", "Đã tiếp nhận"].includes(trangThai)) return "green";
+        if (["Chờ sửa", "Chờ xác nhận"].includes(trangThai)) return "amber";
+        if (trangThai === "Đang sửa") return "blue";
+        if (trangThai === "Đã hủy") return "red";
+        return "";
     }
-
-    return [
-      `<form id="filters" class="toolbar">`,
-      oTimKiem,
-      oTrangThai,
-      oNgay,
-      `<button class="button secondary">Lọc</button>`,
-      btn("Làm mới", "reset"),
-      add ? btn("+ Thêm mới", "create", "", "primary") : "",
-      extra,
-      `</form>`,
-    ].join("");
-  }
-
-  // columns: [[tên cột dữ liệu, tiêu đề, hàm hiển thị (không bắt buộc)], ...]
-  // actions: hàm (dòng, vị trí) → các nút thao tác của dòng đó (không bắt buộc).
-  function taoBang(columns, rows, actions) {
-    const tieuDe =
-      columns.map((c) => `<th>${esc(c[1])}</th>`).join("") +
-      (actions ? "<th>Thao tác</th>" : "");
-
-    const taoDong = (row, index) => {
-      const cacO = columns
-        .map(([key, label, render]) => `<td>${render ? render(row[key], row) : esc(row[key] ?? "—")}</td>`)
-        .join("");
-      const oThaoTac = actions ? `<td><div class="row-actions">${actions(row, index)}</div></td>` : "";
-      return `<tr>${cacO}${oThaoTac}</tr>`;
+    const taoNhanTrangThai = (giaTriTrangThai) =>
+        `<span class="badge ${mauTrangThai(giaTriTrangThai)}">${maHoaHtml(giaTriTrangThai)}</span>`;
+    const taoNut = (noiDung, thaoTac, maBanGhi = "", kieuHienThi = "secondary small") =>
+        `<button type="button" class="button ${kieuHienThi}" data-action="${maHoaHtml(thaoTac)}" data-id="${maHoaHtml(maBanGhi)}">${maHoaHtml(noiDung)}</button>`;
+    const hienThongBao = (noiDung) => {
+        const phanTu = document.querySelector("#toast");
+        phanTu.textContent = noiDung;
+        phanTu.hidden = false;
+        clearTimeout(boHenThongBao);
+        boHenThongBao = setTimeout(() => (phanTu.hidden = true), 4500);
     };
-
-    const soCot = columns.length + (actions ? 1 : 0);
-    const dongTrong = `<tr><td colspan="${soCot}"><div class="empty">Chưa có dữ liệu phù hợp. Thử thay bộ lọc hoặc thêm bản ghi mới.</div></td></tr>`;
-    const thanBang = rows.length ? rows.map(taoDong).join("") : dongTrong;
-
-    return `<div class="table-wrap"><table><thead><tr>${tieuDe}</tr></thead><tbody>${thanBang}</tbody></table></div>`;
-  }
-
-  function taoPhanTrang(data) {
-    const tongSoTrang = data.totalPages || 1;
-    return [
-      `<div class="pager">`,
-      `<span class="count">${data.total ?? data.items.length} bản ghi</span>`,
-      `<button class="button secondary small" data-action="prev" ${page <= 1 ? "disabled" : ""}>← Trước</button>`,
-      `<span>Trang ${page} / ${tongSoTrang}</span>`,
-      `<button class="button secondary small" data-action="next" ${page >= tongSoTrang ? "disabled" : ""}>Sau →</button>`,
-      `</div>`,
-    ].join("");
-  }
-  function layBoLoc() {
-    return new URLSearchParams({ q, page, pageSize: 12, status, from, to });
-  }
-  async function taiDuLieu() {
-    const turn = ++loadingId;
-    document.querySelector("#page-title").textContent =
-      names[section] || specs.find((x) => x.id === section)?.title || "Quản lý";
-    hienMenu();
-    content.innerHTML = '<div class="empty">Đang đọc dữ liệu…</div>';
-    try {
-      let html = "";
-      if (section === "dashboard") html = await hienTongQuan();
-      else if (section === "reports") html = await hienBaoCao();
-      else if (section === "profile")
-        html = [
-          `<div class="panel">`,
-          `<h2>Đổi mật khẩu</h2>`,
-          `<p class="hint">Mật khẩu được cập nhật cho tài khoản dùng chung của nhóm trên cả website và ứng dụng quản lý.</p>`,
-          btn("Đổi mật khẩu", "password", "", "primary"),
-          `</div>`,
-        ].join("");
-      else if (section === "myAttendance") {
-        const d = await api("/api/workshop/my-attendance?" + layBoLoc());
-        html = `<div class="panel"><h2>Tổng giờ thực tế: ${esc(d.totalHours)}</h2>${taoBoLoc({ dates: true })}${taoBang(
-          [
-            ["date", "Ngày", date],
-            ["shift", "Ca"],
-            ["start", "Bắt đầu"],
-            ["end", "Kết thúc"],
-            ["hours", "Giờ thực tế"],
-          ],
-          d.items,
-        )}</div>`;
-      } else {
-        const spec = specs.find((x) => x.id === section);
-        let endpoint = spec
-          ? "/api/catalog/" + section
-          : {
-              jobs: "/api/workshop/jobs",
-              bookings: "/api/workshop/bookings",
-              purchases: "/api/workshop/stock/purchases",
-              stockHistory: "/api/workshop/stock/history",
-              invoices: "/api/workshop/invoices",
-            }[section];
-        if (!endpoint) {
-          location.hash = "dashboard";
-          return;
-        }
-        const d = await api(endpoint + "?" + layBoLoc());
-        if (turn !== loadingId) return;
-        current = d.items;
-        if (section === "customers") {
-          html =
-            taoBoLoc({ placeholder: "Tìm mã, tên, số điện thoại hoặc biển số…" }) +
-            (d.items.length
-              ? taoBang(
-                  [
-                    ["MaKhachHang", "Mã khách hàng"],
-                    ["TenKhachHang", "Tên khách hàng"],
-                    ["SoDienThoai", "Số điện thoại"],
-                    ["vehicleCount", "Số xe"],
-                  ],
-                  d.items,
-                  (_, i) => btn("Xem xe", "customer-vehicles", i) + btn("Sửa", "edit", i),
+    const layLuaChon = async (loaiDanhMuc, giaTriNhap = "", khongBatBuoc = true) => {
+        const cacDong = await giaoTiep("/api/catalog/options/" + loaiDanhMuc);
+        return (
+            (khongBatBuoc ? '<option value="">Chọn…</option>' : "") +
+            cacDong
+                .map(
+                    (phanTuXet) =>
+                        `<option value="${maHoaHtml(phanTuXet.id)}" ${String(phanTuXet.id) === String(giaTriNhap) ? "selected" : ""}>${maHoaHtml(phanTuXet.label)} [${maHoaHtml(phanTuXet.id)}]</option>`,
                 )
-              : '<div class="empty">Không tìm thấy khách hàng phù hợp.</div>');
-        } else if (spec) {
-          const cols = spec.fields
-            .filter((f) => f.type !== "password")
-            .map((f) => [
-              f.name,
-              f.label,
-              (v) =>
-                f.type === "bool"
-                  ? badge(v ? "Đang hoạt động" : "Ngừng hoạt động")
-                  : f.type === "date"
-                    ? date(v)
-                    : f.type === "money" || f.type === "signedMoney"
-                      ? money(v)
-                      : esc(v),
-            ]);
-          html =
-            taoBoLoc({
-              add: true,
-              extra:
-                section === "parts"
-                  ? btn("Điều chỉnh tồn", "stock-adjust")
-                  : "",
-            }) +
-            taoBang(cols, d.items, (r, i) => {
-              // Chỉ hiện nút Sửa khi danh mục có trường sửa được ngoài cột khóa
-              const coTheSua = spec.fields.some((f) => !f.readOnly && !spec.keys.includes(f.name));
-              const nutSua = coTheSua ? btn("Sửa", "edit", i) : "";
-              const nutNoiDung = section === "services" ? btn("Ảnh & nội dung", "content", r.MaDichVu) : "";
-              return nutSua + nutNoiDung + btn("Xóa", "delete", i);
-            });
-        }
-        if (section === "jobs")
-          html =
-            taoBoLoc({ dates: true, states: true, add: canReceive }) +
-            taoBang(
-              [
-                ["id", "Mã phiếu"],
-                [
-                  "customerName",
-                  "Khách hàng",
-                  (v, r) =>
-                    `${esc(v)}<span class="cell-secondary">${esc(r.phone)}</span>`,
-                ],
-                [
-                  "licensePlate",
-                  "Xe",
-                  (v, r) =>
-                    `<b>${esc(v)}</b><span class="cell-secondary">${esc(r.brand)}</span>`,
-                ],
-                ["dueDate", "Hẹn trả", date],
-                ["status", "Tiến độ", badge],
-                ["total", "Tổng tiền", money],
-                ["paid", "Thu tiền", (v) => badge(v ? "Đã thu" : "Chưa thu")],
-              ],
-              d.items,
-              (r) => btn("Chi tiết", "job", r.id),
-            );
-        if (section === "bookings")
-          html =
-            taoBoLoc() +
-            taoBang(
-              [
-                ["id", "Mã lịch"],
-                [
-                  "customerName",
-                  "Khách hàng",
-                  (v, r) =>
-                    `${esc(v)}<span class="cell-secondary">${esc(r.phone)}</span>`,
-                ],
-                ["licensePlate", "Biển số"],
-                ["service", "Dịch vụ"],
-                [
-                  "date",
-                  "Ngày / giờ hẹn",
-                  (v) => `${date(v)} · ${esc(String(v).slice(11, 16))}`,
-                ],
-                ["note", "Yêu cầu"],
-                ["status", "Trạng thái", badge],
-              ],
-              d.items,
-              (r) =>
-                r.status === "Chờ xác nhận"
-                  ? btn("Tiếp nhận", "accept", r.id) +
-                    btn("Hủy", "reject", r.id)
-                  : r.jobId
-                    ? btn("Xem phiếu", "job", r.jobId)
-                    : "",
-            );
-        if (section === "purchases")
-          html =
-            taoBoLoc({ add: true }) +
-            taoBang(
-              [
-                ["id", "Mã phiếu"],
-                ["date", "Ngày nhập", date],
-                ["employee", "Nhân viên"],
-                ["note", "Ghi chú"],
-                ["amount", "Tổng nhập", money],
-              ],
-              d.items,
-              (r) => btn("Chi tiết", "purchase-detail", r.id),
-            );
-        if (section === "stockHistory")
-          html =
-            taoBoLoc() +
-            taoBang(
-              [
-                ["id", "Mã"],
-                ["partId", "Phụ tùng"],
-                ["kind", "Nội dung"],
-                ["date", "Ngày", date],
-                ["oldValue", "Trước"],
-                ["newValue", "Sau"],
-                ["reason", "Lý do"],
-                ["employee", "Người thực hiện"],
-              ],
-              d.items,
-            );
-        if (section === "invoices")
-          html =
-            taoBoLoc({ dates: true }) +
-            `<p class="hint">Tổng tiền trong kết quả lọc: <b>${money(d.totalAmount)}</b>. ` +
-            `Lập hóa đơn từ chi tiết phiếu sửa đã hoàn thành.</p>` +
-            taoBang(
-              [
-                ["id", "Hóa đơn"],
-                ["jobId", "Phiếu sửa"],
-                ["customerName", "Khách hàng"],
-                ["licensePlate", "Biển số"],
-                ["paidOn", "Ngày thu", date],
-                ["amount", "Thành tiền", money],
-              ],
-              d.items,
-              (r) => btn("Xem / In", "print-invoice", r.jobId),
-            );
-        html = `<section class="panel">${html}${taoPhanTrang(d)}</section>`;
-      }
-      if (turn !== loadingId) return;
-      content.innerHTML = html;
-      document.querySelector("#filters")?.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const d = new FormData(e.target);
-        q = String(d.get("q") || "");
-        status = String(d.get("status") || "");
-        from = String(d.get("from") || "");
-        to = String(d.get("to") || "");
-        page = 1;
-        taiDuLieu();
-      });
-    } catch (e) {
-      if (turn === loadingId)
-        content.innerHTML = `<div class="error-box">${esc(e.message)} ${btn("Thử lại", "reload")}</div>`;
-    }
-  }
-  async function hienTongQuan() {
-    const d = await api("/api/workshop/dashboard");
-    document.querySelector("#db-status").textContent = "● " + d.database;
-    const count = (s) => d.jobs.find((x) => x.status === s)?.count || 0;
-
-    // Một ô số liệu trên đầu trang.
-    // kieu = "dark" cho ô nổi bật; style dùng khi số tiền dài cần chữ nhỏ hơn
-    function oSoLieu(nhan, giaTri, ghiChu, kieu = "", style = "") {
-      const lop = kieu ? `stat ${kieu}` : "stat";
-      const thuocTinhStyle = style ? ` style="${style}"` : "";
-      return `<article class="${lop}"><label>${nhan}</label><strong${thuocTinhStyle}>${giaTri}</strong><small>${ghiChu}</small></article>`;
-    }
-
-    // Thu ngân/quản lý thấy lịch chờ và doanh thu; thợ thấy số xe của mình
-    const oThu3 = canReceive
-      ? oSoLieu("LỊCH CHỜ XÁC NHẬN", d.pendingBookings, "Yêu cầu từ website")
-      : oSoLieu("ĐÃ HOÀN THÀNH", count("Hoàn thành"), "Xe được giao phụ trách");
-    const oThu4 = canReceive
-      ? oSoLieu("THU HÔM NAY", money(d.todayRevenue), "Từ hóa đơn đã thanh toán", "", "font-size:25px")
-      : oSoLieu("TỔNG PHIẾU", d.jobs.reduce((s, x) => s + x.count, 0), "Trong phạm vi của bạn", "", "font-size:25px");
-
-    const loiChao = [
-      `<div class="welcome">`,
-      `<div><h2>Mọi hoạt động, trong một nơi.</h2><p class="muted">Theo dõi cửa hàng và tiếp tục công việc hôm nay.</p></div>`,
-      canReceive ? btn("+ Tiếp nhận xe", "create-job", "", "primary") : "",
-      `</div>`,
-    ].join("");
-
-    const soLieu = [
-      `<div class="stats">`,
-      oSoLieu("XE ĐANG SỬA", count("Đang sửa"), "Đang được thợ xử lý", "dark"),
-      oSoLieu("CHỜ SỬA", count("Chờ sửa"), "Đã tiếp nhận tại cửa hàng"),
-      oThu3,
-      oThu4,
-      `</div>`,
-    ].join("");
-
-    const bangTrangThai = taoBang(
-      [
-        ["status", "Tiến độ", badge],
-        ["count", "Số phiếu"],
-      ],
-      d.jobs,
-    );
-    const khungTrangThai = `<section class="panel"><div class="panel-head"><h2>Trạng thái phiếu sửa</h2></div>${bangTrangThai}</section>`;
-
-    // Chỉ quản lý mới có d.stockAlerts
-    let khungCanhBaoKho = "";
-    if (d.stockAlerts) {
-      const bangCanhBao = taoBang(
-        [
-          ["id", "Mã"],
-          ["name", "Phụ tùng"],
-          ["stock", "Tồn hiện tại"],
-          ["expiry", "Hạn sử dụng", date],
-        ],
-        d.stockAlerts,
-      );
-      khungCanhBaoKho = [
-        `<section class="panel">`,
-        `<div class="panel-head"><h2>Phụ tùng cần chú ý</h2><a href="#parts">Đến kho →</a></div>`,
-        bangCanhBao,
-        `<p class="hint">Tồn không quá 5 hoặc hết hạn trong 30 ngày tới.</p>`,
-        `</section>`,
-      ].join("");
-    }
-
-    return loiChao + soLieu + khungTrangThai + khungCanhBaoKho;
-  }
-  async function hienBaoCao() {
-    if (!from && !to) {
-      from = today().slice(0, 8) + "01";
-      to = today();
-    }
-    const d = await api("/api/workshop/reports?" + layBoLoc());
-    const max = Math.max(1, ...d.daily.map((x) => x.amount));
-
-    const duongDanCsv = `/api/workshop/reports/export?${new URLSearchParams({ from, to })}`;
-    const boLoc = taoBoLoc({
-      dates: true,
-      extra: `<a class="button primary" href="${duongDanCsv}">Tải CSV</a>`,
-    });
-
-    const oSoLieu = (nhan, soTien, ghiChu, kieu = "stat") =>
-      `<article class="${kieu}"><label>${nhan}</label><strong style="font-size:24px">${money(soTien)}</strong><small>${ghiChu}</small></article>`;
-
-    const soLieu = [
-      `<div class="stats">`,
-      oSoLieu("DOANH THU ĐÃ THU", d.paid, "Theo ngày thanh toán", "stat dark"),
-      oSoLieu("GIÁ TRỊ NHẬP KHO", d.purchases, "Theo ngày nhập"),
-      oSoLieu("THU TRỪ NHẬP KHO", d.cashDifference, "Không phải lợi nhuận kế toán"),
-      oSoLieu("HOÀN THÀNH CHƯA THU", d.unpaid, "Tất cả thời gian"),
-      `</div>`,
-    ].join("");
-
-    // Biểu đồ cột ngang: độ dài mỗi cột tỉ lệ với ngày có doanh thu cao nhất
-    const taoCot = (x) => {
-      const doDai = Math.max(1, (x.amount / max) * 100);
-      return [
-        `<div class="chart-row">`,
-        `<span>${date(x.date)}</span>`,
-        `<div class="chart-track"><span style="width:${doDai}%"></span></div>`,
-        `<strong>${money(x.amount)}</strong>`,
-        `</div>`,
-      ].join("");
-    };
-    const bieuDo = d.daily.length
-      ? d.daily.map(taoCot).join("")
-      : '<div class="empty">Chưa có khoản thu trong kỳ.</div>';
-
-    const bangDichVu = taoBang(
-      [
-        ["name", "Dịch vụ"],
-        ["quantity", "Lượt"],
-        ["amount", "Doanh thu", money],
-      ],
-      d.services,
-    );
-
-    const haiCot = [
-      `<div class="grid-two">`,
-      `<section class="panel"><h2>Doanh thu theo ngày</h2><div class="chart-bars">${bieuDo}</div></section>`,
-      `<section class="panel"><h2>Dịch vụ được sử dụng</h2>${bangDichVu}</section>`,
-      `</div>`,
-    ].join("");
-
-    return boLoc + soLieu + haiCot;
-  }
-  function layKhoa(spec, row) {
-    return spec.keys
-      .map((k) => {
-        const f = spec.fields.find((x) => x.name === k);
-        return f.type === "date" ? String(row[k]).slice(0, 10) : row[k];
-      })
-      .join("~");
-  }
-  const modelHint = 'list="motorcycle-models" placeholder="Ví dụ: Vision"';
-  const brandHint = 'list="motorcycle-brands" placeholder="Ví dụ: Honda"';
-  async function xemXeCuaKhach(customer, target) {
-    target.disabled = true;
-    try {
-      const rows = await api("/api/catalog/customers/" + encodeURIComponent(customer.MaKhachHang) + "/vehicles");
-      if (!target.isConnected || dialog.open) return;
-      moHopThoai(
-        "Xe của " + customer.TenKhachHang,
-        rows.length
-          ? taoBang(
-              [
-                ["BienXe", "Biển số"],
-                ["LoaiXe", "Mẫu xe"],
-                ["HangSanXuat", "Hãng xe"],
-                ["MauSac", "Màu sắc"],
-              ],
-              rows,
-            )
-          : '<div class="empty">Khách hàng chưa có xe.</div>',
-      );
-    } finally {
-      target.disabled = false;
-    }
-  }
-
-  async function suaDanhMuc(index) {
-    const spec = specs.find((x) => x.id === section),
-      row = index == null ? null : current[index];
-    const fields = await Promise.all(
-      spec.fields
-        .filter((f) => !f.readOnly)
-        .map(async (f) => {
-          const fixed = row && spec.keys.includes(f.name),
-            v = row?.[f.name] ?? (f.type === "bool" ? true : "");
-          if (f.type === "select" && !fixed)
-            return selectField(f.name, f.label, await options(f.source, v));
-          if (f.type === "textarea") {
-            const oNhap = `<textarea name="${f.name}" rows="3" maxlength="${f.max}" required>${esc(v)}</textarea>`;
-            return `<label class="field full"><span>${esc(f.label)}</span>${oNhap}</label>`;
-          }
-          if (f.type === "bool") {
-            const oNhap = `<input name="${f.name}" type="checkbox" ${v ? "checked" : ""}/>`;
-            return `<label class="field"><span>${esc(f.label)}</span>${oNhap}</label>`;
-          }
-          const type =
-            f.type === "date"
-              ? "date"
-              : f.type === "time"
-                ? "time"
-                : f.type === "password"
-                  ? "password"
-                  : [
-                        "money",
-                        "signedMoney",
-                        "positiveInt",
-                        "int",
-                        "factor",
-                        "hours",
-                      ].includes(f.type)
-                    ? "number"
-                    : "text";
-          const value =
-            f.type === "date"
-              ? String(v).slice(0, 10)
-              : f.type === "time"
-                ? String(v).slice(0, 5)
-                : f.type === "password"
-                  ? ""
-                  : v;
-          const bounds =
-            f.type === "money" || f.type === "positiveInt"
-              ? 'min="1" step="1"'
-              : f.type === "factor"
-                ? 'min="0.01" max="99.99" step="0.01"'
-                : f.type === "hours"
-                  ? 'min="0" max="24" step="0.01"'
-                  : type === "number"
-                    ? 'step="1"'
-                    : "";
-          const hint = { LoaiXe: modelHint, HangSanXuat: brandHint }[f.name] ?? "";
-          return field(
-            f.name,
-            f.label,
-            type,
-            value,
-            `${fixed ? "readonly" : ""} ${!f.optional ? "required" : ""} maxlength="${f.max}" ${bounds} ${hint}`,
-          );
-        }),
-    );
-    const ghiChuPhuTung =
-      section === "parts"
-        ? '<p class="hint">Phụ tùng mới có tồn 0. Dùng Phiếu nhập để tăng tồn hoặc Điều chỉnh tồn khi kiểm kê.</p>'
-        : "";
-    moHopThoai(
-      (row ? "Cập nhật · " : "Thêm · ") + spec.title,
-      `<div class="form-grid">${fields.join("")}</div>${ghiChuPhuTung}`,
-      async (d) => {
-        const payload = Object.fromEntries(d);
-        for (const f of spec.fields)
-          if (f.type === "bool")
-            payload[f.name] = form.elements[f.name].checked;
-        const r = await api(
-          "/api/catalog/" +
-            section +
-            (row ? "/" + encodeURIComponent(layKhoa(spec, row)) : ""),
-          { method: row ? "PUT" : "POST", body: JSON.stringify(payload) },
+                .join("")
         );
-        return r.message;
-      },
-    );
-  }
-  // Nút "Kiểm tra tiền và phụ tùng" và vùng hiện kết quả xem trước, dùng trong form tiếp nhận.
-  const xemTruocPhieuMarkup =
-    `<div class="detail-actions"><button class="button secondary" type="button" id="job-preview-button">Kiểm tra tiền và phụ tùng</button></div>
-    <div id="job-preview" aria-live="polite"></div>`;
-
-  // Dòng dịch vụ hợp lệ: đã chọn dịch vụ và số lượng là số nguyên 1–1000.
-  const dongDichVuHopLe = (line) =>
-    line.serviceId && Number.isInteger(line.quantity) && line.quantity >= 1 && line.quantity <= 1000;
-
-  function ganXemTruocPhieu(layDuLieu) {
-    const button = body.querySelector("#job-preview-button");
-    const output = body.querySelector("#job-preview");
-    button.addEventListener("click", async () => {
-      const input = layDuLieu();
-      const duDuLieu = input.vehicleType && input.services.length && input.services.every(dongDichVuHopLe);
-      if (!duDuLieu) {
-        output.textContent = "Nhập mẫu xe, chọn dịch vụ và số lượng hợp lệ để kiểm tra.";
-        return;
-      }
-      const request = JSON.stringify(input);
-      const conHienTai = () => button.isConnected && dialog.open && request === JSON.stringify(layDuLieu());
-      button.disabled = true;
-      output.textContent = "Đang kiểm tra…";
-      try {
-        const result = await api("/api/workshop/jobs/preview", { method: "POST", body: request });
-        if (!conHienTai()) return;
-        const parts = result.parts.map((part) => ({ ...part, issue: part.issue || "Đủ" }));
-        output.innerHTML = `<div class="invoice-total">Tạm tính <b>${money(result.total)}</b></div>${parts.length ? taoBang([
-          ["id", "Mã phụ tùng"],
-          ["name", "Phụ tùng"],
-          ["quantity", "Cần dùng"],
-          ["stock", "Tồn kho"],
-          ["issue", "Kiểm tra"],
-        ], parts) : '<p class="hint">Các dịch vụ đã chọn không có định mức phụ tùng.</p>'}
-          <p class="hint">Kho và giá được kiểm tra lại khi lưu phiếu.</p>`;
-      } catch (e) {
-        if (conHienTai()) output.textContent = e.message;
-      } finally {
-        button.disabled = false;
-      }
+    };
+    const taoTruongNhap = (
+        ten,
+        nhanHienThi,
+        kieuNhap = "text",
+        giaTriNhap = "",
+        thuocTinhThem = "",
+    ) =>
+        `<label class="field"><span>${maHoaHtml(nhanHienThi)}</span><input name="${maHoaHtml(ten)}" type="${kieuNhap}" value="${maHoaHtml(giaTriNhap)}" ${thuocTinhThem}/></label>`;
+    const taoTruongChon = (ten, nhanHienThi, noiDungHtml, thuocTinhThem = "required") =>
+        `<label class="field"><span>${maHoaHtml(nhanHienThi)}</span><select name="${ten}" ${thuocTinhThem}>${noiDungHtml}</select></label>`;
+    function moHopThoai(tieuDeNhap, noiDungHtml, hamXuLyLuu = null, nhanHienThi = "Lưu thông tin") {
+        document.querySelector("#editor-title").textContent = tieuDeNhap;
+        noiDungHopThoai.innerHTML = noiDungHtml;
+        loi.textContent = "";
+        khiLuu = hamXuLyLuu;
+        nutLuu.hidden = !hamXuLyLuu;
+        nutLuu.textContent = nhanHienThi;
+        nutLuu.disabled = false;
+        if (!hopThoai.open) hopThoai.showModal();
+    }
+    function dongHopThoai() {
+        if (!dangLuuHopThoai) hopThoai.close();
+    }
+    document.querySelector("#close-editor").onclick = dongHopThoai;
+    document.querySelector("#cancel-editor").onclick = dongHopThoai;
+    hopThoai.addEventListener("cancel", (suKien) => {
+        if (dangLuuHopThoai) suKien.preventDefault();
     });
-    return () => output.replaceChildren();
-  }
-
-  async function tiepNhanXe() {
-    const [serviceOptions, mechanics] = await Promise.all([
-      options("services"),
-      options("mechanics"),
-    ]);
-    const layDuLieu = () => ({
-      vehicleType: form.elements.vehicleType.value.trim(),
-      services: [...body.querySelectorAll("#lines .line-row")].map((row) => ({
-        serviceId: row.querySelector("select").value,
-        quantity: Number(row.querySelector("input").value),
-      })),
+    bieuMau.addEventListener("submit", async (suKienNhap) => {
+        suKienNhap.preventDefault();
+        if (!khiLuu || dangLuuHopThoai || !bieuMau.reportValidity()) return;
+        loi.textContent = "";
+        nutLuu.disabled = true;
+        dangLuuHopThoai = true;
+        const hamXuLyLuu = khiLuu;
+        try {
+            const thongBao = await hamXuLyLuu(new FormData(bieuMau));
+            dangLuuHopThoai = false;
+            hopThoai.close();
+            hienThongBao(thongBao || "Đã lưu thông tin.");
+            await taiDuLieu();
+        } catch (suKienNhap) {
+            loi.textContent = suKienNhap.message;
+        } finally {
+            nutLuu.disabled = false;
+            dangLuuHopThoai = false;
+        }
     });
-    const cacTruong = [
-      field("customerName", "Họ tên khách hàng", "text", "", 'required maxlength="100"'),
-      field("phone", "Số điện thoại", "tel", "", 'required pattern="0[0-9]{8,10}" maxlength="11"'),
-      field("licensePlate", "Biển số xe", "text", "", 'required maxlength="20"'),
-      field("vehicleType", "Mẫu xe", "text", "", `required maxlength="50" ${modelHint}`),
-      field("brand", "Hãng xe", "text", "", `required maxlength="50" ${brandHint}`),
-      field("color", "Màu sắc", "text", "", 'required maxlength="30"'),
-      field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`),
-      selectField("mechanicId", "Phân công thợ (có thể bổ sung sau)", mechanics, ""),
-    ].join("");
+    document.querySelector("#menu-toggle").onclick = () =>
+        document.querySelector("#sidebar").classList.toggle("open");
+    document.querySelector("#logout").onclick = async () => {
+        try {
+            await giaoTiep("/api/auth/logout", { method: "POST" });
+            location.href = "/Account/Login";
+        } catch (suKienNhap) {
+            hienThongBao(suKienNhap.message);
+        }
+    };
+    function hienMenu() {
+        const cacNhom = [
+            [
+                "TỔNG QUAN",
+                [
+                    ["dashboard", "◫"],
+                    ...(duocTiepNhan ? [["bookings", "◷"]] : []),
+                    ...(duocTiepNhan || laTho ? [["jobs", "▱"]] : []),
+                ],
+            ],
+            [
+                "KHÁCH HÀNG & DỊCH VỤ",
+                ["customers", "services", "serviceParts"].map((phanTuXet) => [phanTuXet, "◇"]),
+            ],
+            [
+                "KHO & NHÀ CUNG CẤP",
+                ["parts", "suppliers", ...(laQuanLy ? ["purchases", "stockHistory"] : [])].map(
+                    (phanTuXet) => [phanTuXet, "▦"],
+                ),
+            ],
+            ["NHÂN SỰ", cacNhomNhanSu.map((nhom) => [nhom.items.find(duocMoMuc), "♧"])],
+            [
+                "TÀI CHÍNH",
+                [
+                    ...(duocTiepNhan ? [["invoices", "▤"]] : []),
+                    ...(laQuanLy ? [["reports", "◴"]] : []),
+                    ["profile", "⚙"],
+                ],
+            ],
+        ];
+        document.querySelector("#navigation").innerHTML = cacNhom
+            .map(([nhanHienThi, cacMucDuLieu]) => {
+                cacMucDuLieu = cacMucDuLieu.filter(
+                    ([maBanGhi]) =>
+                        cacTenMuc[maBanGhi] ||
+                        cacCauHinhDanhMuc.some((phanTuXet) => phanTuXet.id === maBanGhi),
+                );
+                if (!cacMucDuLieu.length) return "";
 
-    const noiDungForm = [
-      `<div class="form-grid">${cacTruong}</div>`,
-      `<h3 style="margin-top:24px">Dịch vụ thực hiện</h3>`,
-      `<div id="job-services"><div class="line-items" id="lines"></div>${btn("+ Thêm dịch vụ", "line-add")}</div>`,
-      xemTruocPhieuMarkup,
-    ].join("");
+                const cacMuc = cacMucDuLieu.map(([maBanGhi, bieuTuong]) => {
+                    const nhom = cacNhomNhanSu.find((nhom) => nhom.items.includes(maBanGhi));
+                    const tenMuc =
+                        nhom?.title ||
+                        cacTenMuc[maBanGhi] ||
+                        cacCauHinhDanhMuc.find((phanTuXet) => phanTuXet.id === maBanGhi)?.title;
+                    const dangChon = nhom
+                        ? nhom.items.includes(mucDangChon)
+                        : maBanGhi === mucDangChon;
+                    return `<a class="nav-item ${dangChon ? "active" : ""}" href="#${maBanGhi}"${dangChon ? ' aria-current="page"' : ""}><i>${bieuTuong}</i>${maHoaHtml(tenMuc)}</a>`;
+                });
 
-    moHopThoai(
-      "Tiếp nhận xe",
-      noiDungForm,
-      async (d) => {
-        const input = Object.fromEntries(d);
-        Object.assign(input, layDuLieu());
-        delete input.line;
-        const r = await api("/api/workshop/jobs", {
-          method: "POST",
-          body: JSON.stringify(input),
+                return `<div class="nav-label">${nhanHienThi}</div>` + cacMuc.join("");
+            })
+            .join("");
+    }
+    function taoBoLoc({
+        dates: locTheoNgay = false,
+        states: locTrangThai = false,
+        add: choThem = false,
+        extra: thuocTinhThem = "",
+        placeholder: noiDungGoiY = "Tìm mã, tên hoặc thông tin…",
+    } = {}) {
+        const oTimKiem = `<input name="q" class="search" placeholder="${maHoaHtml(noiDungGoiY)}" aria-label="Tìm kiếm" value="${maHoaHtml(tuKhoa)}" maxlength="150"/>`;
+
+        let oTrangThai = "";
+        if (locTrangThai) {
+            const cacTrangThai = ["Chờ sửa", "Đang sửa", "Hoàn thành", "Đã hủy"]
+                .map(
+                    (giaTriTrangThai) =>
+                        `<option ${giaTriTrangThai === trangThaiLoc ? "selected" : ""}>${giaTriTrangThai}</option>`,
+                )
+                .join("");
+            oTrangThai = `<select name="status" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${cacTrangThai}</select>`;
+        }
+
+        let oNgay = "";
+        if (locTheoNgay) {
+            oNgay =
+                `<input name="from" aria-label="Từ ngày" type="date" value="${tuNgay}"/>` +
+                `<input name="to" aria-label="Đến ngày" type="date" value="${denNgay}"/>`;
+        }
+
+        return [
+            `<form id="filters" class="toolbar">`,
+            oTimKiem,
+            oTrangThai,
+            oNgay,
+            `<button class="button secondary">Lọc</button>`,
+            taoNut("Làm mới", "reset"),
+            choThem ? taoNut("+ Thêm mới", "create", "", "primary") : "",
+            thuocTinhThem,
+            `</form>`,
+        ].join("");
+    }
+    function taoBang(cacCotHienThi, cacDong, cacThaoTac) {
+        const tieuDe =
+            cacCotHienThi.map((kyTu) => `<th>${maHoaHtml(kyTu[1])}</th>`).join("") +
+            (cacThaoTac ? "<th>Thao tác</th>" : "");
+
+        const taoDong = (dongDuLieu, viTri) => {
+            const cacO = cacCotHienThi
+                .map(
+                    ([khoa, nhanHienThi, hienKetQua]) =>
+                        `<td>${hienKetQua ? hienKetQua(dongDuLieu[khoa], dongDuLieu) : maHoaHtml(dongDuLieu[khoa] ?? "—")}</td>`,
+                )
+                .join("");
+            const oThaoTac = cacThaoTac
+                ? `<td><div class="row-actions">${cacThaoTac(dongDuLieu, viTri)}</div></td>`
+                : "";
+            return `<tr>${cacO}${oThaoTac}</tr>`;
+        };
+
+        const soCot = cacCotHienThi.length + (cacThaoTac ? 1 : 0);
+        const dongTrong = `<tr><td colspan="${soCot}"><div class="empty">Chưa có dữ liệu phù hợp. Thử thay bộ lọc hoặc thêm bản ghi mới.</div></td></tr>`;
+        const thanBang = cacDong.length ? cacDong.map(taoDong).join("") : dongTrong;
+
+        return `<div class="table-wrap"><table><thead><tr>${tieuDe}</tr></thead><tbody>${thanBang}</tbody></table></div>`;
+    }
+
+    function taoPhanTrang(duLieuTraVe) {
+        const tongSoTrang = duLieuTraVe.totalPages || 1;
+        return [
+            `<div class="pager">`,
+            `<span class="count">${duLieuTraVe.total ?? duLieuTraVe.items.length} bản ghi</span>`,
+            `<button class="button secondary small" data-action="prev" ${trang <= 1 ? "disabled" : ""}>← Trước</button>`,
+            `<span>Trang ${trang} / ${tongSoTrang}</span>`,
+            `<button class="button secondary small" data-action="next" ${trang >= tongSoTrang ? "disabled" : ""}>Sau →</button>`,
+            `</div>`,
+        ].join("");
+    }
+    function layBoLoc() {
+        return new URLSearchParams({
+            q: tuKhoa,
+            page: trang,
+            pageSize: 12,
+            status: trangThaiLoc,
+            from: tuNgay,
+            to: denNgay,
         });
-        return r.message + " Mã " + r.id;
-      },
-      "Tiếp nhận và trừ kho",
-    );
-    body.dataset.lineOptions = serviceOptions;
-    themDong();
-    const xoaXemTruoc = ganXemTruocPhieu(layDuLieu);
-    form.elements.vehicleType.addEventListener("input", xoaXemTruoc);
-    const serviceFields = body.querySelector("#job-services");
-    serviceFields.addEventListener("input", xoaXemTruoc);
-    serviceFields.addEventListener("click", (e) => {
-      if (e.target.closest('[data-action="line-add"], [data-action="line-remove"]')) xoaXemTruoc();
-    });
-  }
-  // Thêm một dòng (chọn dịch vụ/phụ tùng + số lượng) vào form đang mở.
-  // Dùng chung cho phiếu nhập kho (Người 4) và tiếp nhận xe (Người 3).
-  function themDong() {
-    const danhSachDong = document.querySelector("#lines");
-    // Mỗi form tự khai báo số lượng tối đa qua data-max; mặc định 1.000
-    const soLuongToiDa = Number(danhSachDong.dataset.max) || 1000;
+    }
+    async function taiDuLieu() {
+        const lanTai = ++maLanTai;
+        document.querySelector("#page-title").textContent =
+            layNhomNhanSu()?.title ||
+            cacTenMuc[mucDangChon] ||
+            cacCauHinhDanhMuc.find((phanTuXet) => phanTuXet.id === mucDangChon)?.title ||
+            "Quản lý";
+        hienMenu();
+        const dieuHuongNhanSu = hienMucNhanSu();
+        noiDungTrang.innerHTML = dieuHuongNhanSu + '<div class="empty">Đang đọc dữ liệu…</div>';
+        try {
+            let noiDungHtml = "";
+            if (mucDangChon === "dashboard") noiDungHtml = await hienTongQuan();
+            else if (mucDangChon === "reports") noiDungHtml = await hienBaoCao();
+            else if (mucDangChon === "profile")
+                noiDungHtml = [
+                    `<div class="panel">`,
+                    `<h2>Đổi mật khẩu</h2>`,
+                    `<p class="hint">Mật khẩu được cập nhật cho tài khoản dùng chung của nhóm trên cả website và ứng dụng quản lý.</p>`,
+                    taoNut("Đổi mật khẩu", "password", "", "primary"),
+                    `</div>`,
+                ].join("");
+            else if (mucDangChon === "myAttendance") {
+                const duLieu = await giaoTiep("/api/workshop/my-attendance?" + layBoLoc());
+                noiDungHtml = `<div class="panel"><h2>Tổng giờ thực tế: ${maHoaHtml(duLieu.totalHours)}</h2>${taoBoLoc({ dates: true })}${taoBang(
+                    [
+                        ["date", "Ngày", dinhDangNgay],
+                        ["shift", "Ca"],
+                        ["start", "Bắt đầu"],
+                        ["end", "Kết thúc"],
+                        ["hours", "Giờ thực tế"],
+                    ],
+                    duLieu.items,
+                )}</div>`;
+            } else {
+                const cauHinhDanhMuc = cacCauHinhDanhMuc.find(
+                    (phanTuXet) => phanTuXet.id === mucDangChon,
+                );
+                let duongDanApi = cauHinhDanhMuc
+                    ? "/api/catalog/" + mucDangChon
+                    : {
+                          jobs: "/api/workshop/jobs",
+                          bookings: "/api/workshop/bookings",
+                          purchases: "/api/workshop/stock/purchases",
+                          stockHistory: "/api/workshop/stock/history",
+                          invoices: "/api/workshop/invoices",
+                      }[mucDangChon];
+                if (!duongDanApi) {
+                    location.hash = "dashboard";
+                    return;
+                }
+                const duLieu = await giaoTiep(duongDanApi + "?" + layBoLoc());
+                if (lanTai !== maLanTai) return;
+                cacDongHienTai = duLieu.items;
+                if (mucDangChon === "customers") {
+                    noiDungHtml =
+                        taoBoLoc({ placeholder: "Tìm mã, tên, số điện thoại hoặc biển số…" }) +
+                        (duLieu.items.length
+                            ? taoBang(
+                                  [
+                                      ["MaKhachHang", "Mã khách hàng"],
+                                      ["TenKhachHang", "Tên khách hàng"],
+                                      ["SoDienThoai", "Số điện thoại"],
+                                      ["vehicleCount", "Số xe"],
+                                  ],
+                                  duLieu.items,
+                                  (_, chiSo) =>
+                                      taoNut("Xem xe", "customer-vehicles", chiSo) +
+                                      taoNut("Sửa", "edit", chiSo),
+                              )
+                            : '<div class="empty">Không tìm thấy khách hàng phù hợp.</div>');
+                } else if (cauHinhDanhMuc) {
+                    const cacCot = cauHinhDanhMuc.fields
+                        .filter((truongNhap) => truongNhap.type !== "password")
+                        .map((truongNhap) => [
+                            truongNhap.name,
+                            truongNhap.label,
+                            (giaTriTruong) =>
+                                truongNhap.type === "bool"
+                                    ? taoNhanTrangThai(
+                                          giaTriTruong ? "Đang hoạt động" : "Ngừng hoạt động",
+                                      )
+                                    : truongNhap.type === "date"
+                                      ? dinhDangNgay(giaTriTruong)
+                                      : truongNhap.type === "money" ||
+                                          truongNhap.type === "signedMoney"
+                                        ? dinhDangTien(giaTriTruong)
+                                        : maHoaHtml(giaTriTruong),
+                        ]);
+                    noiDungHtml =
+                        taoBoLoc({
+                            add: true,
+                            extra:
+                                mucDangChon === "parts"
+                                    ? taoNut("Điều chỉnh tồn", "stock-adjust")
+                                    : "",
+                        }) +
+                        taoBang(cacCot, duLieu.items, (banGhi, chiSo) => {
+                            const coTheSua = cauHinhDanhMuc.fields.some(
+                                (truongNhap) =>
+                                    !truongNhap.readOnly &&
+                                    !cauHinhDanhMuc.keys.includes(truongNhap.name),
+                            );
+                            const nutSua = coTheSua ? taoNut("Sửa", "edit", chiSo) : "";
+                            const nutNoiDung =
+                                mucDangChon === "services"
+                                    ? taoNut("Ảnh & nội dung", "content", banGhi.MaDichVu)
+                                    : "";
+                            return nutSua + nutNoiDung + taoNut("Xóa", "delete", chiSo);
+                        });
+                }
+                if (mucDangChon === "jobs")
+                    noiDungHtml =
+                        taoBoLoc({ dates: true, states: true, add: duocTiepNhan }) +
+                        taoBang(
+                            [
+                                ["id", "Mã phiếu"],
+                                [
+                                    "customerName",
+                                    "Khách hàng",
+                                    (giaTriTruong, banGhi) =>
+                                        `${maHoaHtml(giaTriTruong)}<span class="cell-secondary">${maHoaHtml(banGhi.phone)}</span>`,
+                                ],
+                                [
+                                    "licensePlate",
+                                    "Xe",
+                                    (giaTriTruong, banGhi) =>
+                                        `<b>${maHoaHtml(giaTriTruong)}</b><span class="cell-secondary">${maHoaHtml(banGhi.brand)}</span>`,
+                                ],
+                                ["dueDate", "Hẹn trả", dinhDangNgay],
+                                ["status", "Tiến độ", taoNhanTrangThai],
+                                ["total", "Tổng tiền", dinhDangTien],
+                                [
+                                    "paid",
+                                    "Thu tiền",
+                                    (giaTriTruong) =>
+                                        taoNhanTrangThai(giaTriTruong ? "Đã thu" : "Chưa thu"),
+                                ],
+                            ],
+                            duLieu.items,
+                            (banGhi) => taoNut("Chi tiết", "job", banGhi.id),
+                        );
+                if (mucDangChon === "bookings")
+                    noiDungHtml =
+                        taoBoLoc() +
+                        taoBang(
+                            [
+                                ["id", "Mã lịch"],
+                                [
+                                    "customerName",
+                                    "Khách hàng",
+                                    (giaTriTruong, banGhi) =>
+                                        `${maHoaHtml(giaTriTruong)}<span class="cell-secondary">${maHoaHtml(banGhi.phone)}</span>`,
+                                ],
+                                ["licensePlate", "Biển số"],
+                                ["service", "Dịch vụ"],
+                                [
+                                    "date",
+                                    "Ngày / giờ hẹn",
+                                    (giaTriTruong) =>
+                                        `${dinhDangNgay(giaTriTruong)} · ${maHoaHtml(String(giaTriTruong).slice(11, 16))}`,
+                                ],
+                                ["note", "Yêu cầu"],
+                                ["status", "Trạng thái", taoNhanTrangThai],
+                            ],
+                            duLieu.items,
+                            (banGhi) =>
+                                banGhi.status === "Chờ xác nhận"
+                                    ? taoNut("Tiếp nhận", "accept", banGhi.id) +
+                                      taoNut("Hủy", "reject", banGhi.id)
+                                    : banGhi.jobId
+                                      ? taoNut("Xem phiếu", "job", banGhi.jobId)
+                                      : "",
+                        );
+                if (mucDangChon === "purchases")
+                    noiDungHtml =
+                        taoBoLoc({ add: true }) +
+                        taoBang(
+                            [
+                                ["id", "Mã phiếu"],
+                                ["date", "Ngày nhập", dinhDangNgay],
+                                ["employee", "Nhân viên"],
+                                ["note", "Ghi chú"],
+                                ["amount", "Tổng nhập", dinhDangTien],
+                            ],
+                            duLieu.items,
+                            (banGhi) => taoNut("Chi tiết", "purchase-detail", banGhi.id),
+                        );
+                if (mucDangChon === "stockHistory")
+                    noiDungHtml =
+                        taoBoLoc() +
+                        taoBang(
+                            [
+                                ["id", "Mã"],
+                                ["partId", "Phụ tùng"],
+                                ["kind", "Nội dung"],
+                                ["date", "Ngày", dinhDangNgay],
+                                ["oldValue", "Trước"],
+                                ["newValue", "Sau"],
+                                ["reason", "Lý do"],
+                                ["employee", "Người thực hiện"],
+                            ],
+                            duLieu.items,
+                        );
+                if (mucDangChon === "invoices")
+                    noiDungHtml =
+                        taoBoLoc({ dates: true }) +
+                        `<p class="hint">Tổng tiền trong kết quả lọc: <b>${dinhDangTien(duLieu.totalAmount)}</b>. ` +
+                        `Lập hóa đơn từ chi tiết phiếu sửa đã hoàn thành.</p>` +
+                        taoBang(
+                            [
+                                ["id", "Hóa đơn"],
+                                ["jobId", "Phiếu sửa"],
+                                ["customerName", "Khách hàng"],
+                                ["licensePlate", "Biển số"],
+                                ["paidOn", "Ngày thu", dinhDangNgay],
+                                ["amount", "Thành tiền", dinhDangTien],
+                            ],
+                            duLieu.items,
+                            (banGhi) => taoNut("Xem / In", "print-invoice", banGhi.jobId),
+                        );
+                noiDungHtml = `<section class="panel">${noiDungHtml}${taoPhanTrang(duLieu)}</section>`;
+            }
+            if (lanTai !== maLanTai) return;
+            noiDungTrang.innerHTML = dieuHuongNhanSu + noiDungHtml;
+            document.querySelector("#filters")?.addEventListener("submit", (suKienNhap) => {
+                suKienNhap.preventDefault();
+                const duLieu = new FormData(suKienNhap.target);
+                tuKhoa = String(duLieu.get("q") || "");
+                trangThaiLoc = String(duLieu.get("status") || "");
+                tuNgay = String(duLieu.get("from") || "");
+                denNgay = String(duLieu.get("to") || "");
+                trang = 1;
+                taiDuLieu();
+            });
+        } catch (suKienNhap) {
+            if (lanTai === maLanTai)
+                noiDungTrang.innerHTML =
+                    dieuHuongNhanSu +
+                    `<div class="error-box">${maHoaHtml(suKienNhap.message)} ${taoNut("Thử lại", "reload")}</div>`;
+        }
+    }
+    async function hienTongQuan() {
+        const duLieu = await giaoTiep("/api/workshop/dashboard");
+        document.querySelector("#db-status").textContent = "● " + duLieu.database;
+        const demSoLuong = (giaTriTrangThai) =>
+            duLieu.jobs.find((phanTuXet) => phanTuXet.status === giaTriTrangThai)?.count || 0;
+        function oSoLieu(nhan, giaTri, ghiChu, kieu = "", kieuHienThi = "") {
+            const lop = kieu ? `stat ${kieu}` : "stat";
+            const thuocTinhStyle = kieuHienThi ? ` style="${kieuHienThi}"` : "";
+            return `<article class="${lop}"><label>${nhan}</label><strong${thuocTinhStyle}>${giaTri}</strong><small>${ghiChu}</small></article>`;
+        }
+        const oThu3 = duocTiepNhan
+            ? oSoLieu("LỊCH CHỜ XÁC NHẬN", duLieu.pendingBookings, "Yêu cầu từ website")
+            : oSoLieu("ĐÃ HOÀN THÀNH", demSoLuong("Hoàn thành"), "Xe được giao phụ trách");
+        const oThu4 = duocTiepNhan
+            ? oSoLieu(
+                  "THU HÔM NAY",
+                  dinhDangTien(duLieu.todayRevenue),
+                  "Từ hóa đơn đã thanh toán",
+                  "",
+                  "font-size:25px",
+              )
+            : oSoLieu(
+                  "TỔNG PHIẾU",
+                  duLieu.jobs.reduce(
+                      (giaTriTrangThai, phanTuXet) => giaTriTrangThai + phanTuXet.count,
+                      0,
+                  ),
+                  "Trong phạm vi của bạn",
+                  "",
+                  "font-size:25px",
+              );
 
-    const dongMoi = `
+        const loiChao = [
+            `<div class="welcome">`,
+            `<div><h2>Mọi hoạt động, trong một nơi.</h2><p class="muted">Theo dõi cửa hàng và tiếp tục công việc hôm nay.</p></div>`,
+            duocTiepNhan ? taoNut("+ Tiếp nhận xe", "create-job", "", "primary") : "",
+            `</div>`,
+        ].join("");
+
+        const soLieu = [
+            `<div class="stats">`,
+            oSoLieu("XE ĐANG SỬA", demSoLuong("Đang sửa"), "Đang được thợ xử lý", "dark"),
+            oSoLieu("CHỜ SỬA", demSoLuong("Chờ sửa"), "Đã tiếp nhận tại cửa hàng"),
+            oThu3,
+            oThu4,
+            `</div>`,
+        ].join("");
+
+        const bangTrangThai = taoBang(
+            [
+                ["status", "Tiến độ", taoNhanTrangThai],
+                ["count", "Số phiếu"],
+            ],
+            duLieu.jobs,
+        );
+        const khungTrangThai = `<section class="panel"><div class="panel-head"><h2>Trạng thái phiếu sửa</h2></div>${bangTrangThai}</section>`;
+        let khungCanhBaoKho = "";
+        if (duLieu.stockAlerts) {
+            const bangCanhBao = taoBang(
+                [
+                    ["id", "Mã"],
+                    ["name", "Phụ tùng"],
+                    ["stock", "Tồn hiện tại"],
+                    ["expiry", "Hạn sử dụng", dinhDangNgay],
+                ],
+                duLieu.stockAlerts,
+            );
+            khungCanhBaoKho = [
+                `<section class="panel">`,
+                `<div class="panel-head"><h2>Phụ tùng cần chú ý</h2><a href="#parts">Đến kho →</a></div>`,
+                bangCanhBao,
+                `<p class="hint">Tồn không quá 5 hoặc hết hạn trong 30 ngày tới.</p>`,
+                `</section>`,
+            ].join("");
+        }
+
+        return loiChao + soLieu + khungTrangThai + khungCanhBaoKho;
+    }
+    async function hienBaoCao() {
+        if (!tuNgay && !denNgay) {
+            tuNgay = homNay().slice(0, 8) + "01";
+            denNgay = homNay();
+        }
+        const duLieu = await giaoTiep("/api/workshop/reports?" + layBoLoc());
+        const gioiHanToiDa = Math.max(1, ...duLieu.daily.map((phanTuXet) => phanTuXet.amount));
+
+        const duongDanCsv = `/api/workshop/reports/export?${new URLSearchParams({ from: tuNgay, to: denNgay })}`;
+        const boLoc = taoBoLoc({
+            dates: true,
+            extra: `<a class="button primary" href="${duongDanCsv}">Tải CSV</a>`,
+        });
+
+        const oSoLieu = (nhan, soTien, ghiChu, kieu = "stat") =>
+            `<article class="${kieu}"><label>${nhan}</label><strong style="font-size:24px">${dinhDangTien(soTien)}</strong><small>${ghiChu}</small></article>`;
+
+        const soLieu = [
+            `<div class="stats">`,
+            oSoLieu("DOANH THU ĐÃ THU", duLieu.paid, "Theo ngày thanh toán", "stat dark"),
+            oSoLieu("GIÁ TRỊ NHẬP KHO", duLieu.purchases, "Theo ngày nhập"),
+            oSoLieu("THU TRỪ NHẬP KHO", duLieu.cashDifference, "Không phải lợi nhuận kế toán"),
+            oSoLieu("HOÀN THÀNH CHƯA THU", duLieu.unpaid, "Tất cả thời gian"),
+            `</div>`,
+        ].join("");
+        const taoCot = (phanTuXet) => {
+            const doDai = Math.max(1, (phanTuXet.amount / gioiHanToiDa) * 100);
+            return [
+                `<div class="chart-row">`,
+                `<span>${dinhDangNgay(phanTuXet.date)}</span>`,
+                `<div class="chart-track"><span style="width:${doDai}%"></span></div>`,
+                `<strong>${dinhDangTien(phanTuXet.amount)}</strong>`,
+                `</div>`,
+            ].join("");
+        };
+        const bieuDo = duLieu.daily.length
+            ? duLieu.daily.map(taoCot).join("")
+            : '<div class="empty">Chưa có khoản thu trong kỳ.</div>';
+
+        const bangDichVu = taoBang(
+            [
+                ["name", "Dịch vụ"],
+                ["quantity", "Lượt"],
+                ["amount", "Doanh thu", dinhDangTien],
+            ],
+            duLieu.services,
+        );
+
+        const haiCot = [
+            `<div class="grid-two">`,
+            `<section class="panel"><h2>Doanh thu theo ngày</h2><div class="chart-bars">${bieuDo}</div></section>`,
+            `<section class="panel"><h2>Dịch vụ được sử dụng</h2>${bangDichVu}</section>`,
+            `</div>`,
+        ].join("");
+
+        return boLoc + soLieu + haiCot;
+    }
+    function layKhoa(cauHinhDanhMuc, dongDuLieu) {
+        return cauHinhDanhMuc.keys
+            .map((tenCot) => {
+                const truongNhap = cauHinhDanhMuc.fields.find(
+                    (phanTuXet) => phanTuXet.name === tenCot,
+                );
+                return truongNhap.type === "date"
+                    ? String(dongDuLieu[tenCot]).slice(0, 10)
+                    : dongDuLieu[tenCot];
+            })
+            .join("~");
+    }
+    const goiYMauXe = 'list="motorcycle-models" placeholder="Ví dụ: Vision"';
+    const goiYHangXe = 'list="motorcycle-brands" placeholder="Ví dụ: Honda"';
+    async function xemXeCuaKhach(khachHang, phanTuDich) {
+        phanTuDich.disabled = true;
+        try {
+            const cacDong = await giaoTiep(
+                "/api/catalog/customers/" + encodeURIComponent(khachHang.MaKhachHang) + "/vehicles",
+            );
+            if (!phanTuDich.isConnected || hopThoai.open) return;
+            moHopThoai(
+                "Xe của " + khachHang.TenKhachHang,
+                cacDong.length
+                    ? taoBang(
+                          [
+                              ["BienXe", "Biển số"],
+                              ["LoaiXe", "Mẫu xe"],
+                              ["HangSanXuat", "Hãng xe"],
+                              ["MauSac", "Màu sắc"],
+                          ],
+                          cacDong,
+                      )
+                    : '<div class="empty">Khách hàng chưa có xe.</div>',
+            );
+        } finally {
+            phanTuDich.disabled = false;
+        }
+    }
+
+    async function suaDanhMuc(viTri) {
+        const cauHinhDanhMuc = cacCauHinhDanhMuc.find((phanTuXet) => phanTuXet.id === mucDangChon),
+            dongDuLieu = viTri == null ? null : cacDongHienTai[viTri];
+        const maDaCap =
+            !dongDuLieu && cauHinhDanhMuc.fields.some((truong) => truong.type === "code")
+                ? await giaoTiep("/api/catalog/" + cauHinhDanhMuc.id + "/code", { method: "POST" })
+                : null;
+        const cacTruong = await Promise.all(
+            cauHinhDanhMuc.fields
+                .filter((truongNhap) => !truongNhap.readOnly)
+                .map(async (truongNhap) => {
+                    if (truongNhap.type === "code")
+                        return `<label class="field"><span>${maHoaHtml(truongNhap.label)}</span><input type="text" value="${maHoaHtml(dongDuLieu?.[truongNhap.name] || maDaCap.id)}" readonly aria-readonly="true"/></label>`;
+                    const khoaCoDinh = dongDuLieu && cauHinhDanhMuc.keys.includes(truongNhap.name),
+                        giaTriTruong =
+                            dongDuLieu?.[truongNhap.name] ??
+                            (truongNhap.type === "bool" ? true : "");
+                    if (truongNhap.type === "select" && !khoaCoDinh)
+                        return taoTruongChon(
+                            truongNhap.name,
+                            truongNhap.label,
+                            await layLuaChon(truongNhap.source, giaTriTruong),
+                        );
+                    if (truongNhap.type === "textarea") {
+                        const oNhap = `<textarea name="${truongNhap.name}" rows="3" maxlength="${truongNhap.max}" required>${maHoaHtml(giaTriTruong)}</textarea>`;
+                        return `<label class="field full"><span>${maHoaHtml(truongNhap.label)}</span>${oNhap}</label>`;
+                    }
+                    if (truongNhap.type === "bool") {
+                        const oNhap = `<input name="${truongNhap.name}" type="checkbox" ${giaTriTruong ? "checked" : ""}/>`;
+                        return `<label class="field"><span>${maHoaHtml(truongNhap.label)}</span>${oNhap}</label>`;
+                    }
+                    const kieuNhap =
+                        truongNhap.type === "date"
+                            ? "date"
+                            : truongNhap.type === "time"
+                              ? "time"
+                              : truongNhap.type === "password"
+                                ? "password"
+                                : [
+                                        "money",
+                                        "signedMoney",
+                                        "positiveInt",
+                                        "int",
+                                        "factor",
+                                        "hours",
+                                    ].includes(truongNhap.type)
+                                  ? "number"
+                                  : "text";
+                    const giaTriNhap =
+                        truongNhap.type === "date"
+                            ? String(giaTriTruong).slice(0, 10)
+                            : truongNhap.type === "time"
+                              ? String(giaTriTruong).slice(0, 5)
+                              : truongNhap.type === "password"
+                                ? ""
+                                : giaTriTruong;
+                    const gioiHan =
+                        truongNhap.type === "money" || truongNhap.type === "positiveInt"
+                            ? 'min="1" step="1"'
+                            : truongNhap.type === "factor"
+                              ? 'min="0.01" max="99.99" step="0.01"'
+                              : truongNhap.type === "hours"
+                                ? 'min="0" max="24" step="0.01"'
+                                : kieuNhap === "number"
+                                  ? 'step="1"'
+                                  : "";
+                    const goiY =
+                        { LoaiXe: goiYMauXe, HangSanXuat: goiYHangXe }[truongNhap.name] ?? "";
+                    return taoTruongNhap(
+                        truongNhap.name,
+                        truongNhap.label,
+                        kieuNhap,
+                        giaTriNhap,
+                        `${khoaCoDinh ? "readonly" : ""} ${!truongNhap.optional ? "required" : ""} maxlength="${truongNhap.max}" ${gioiHan} ${goiY}`,
+                    );
+                }),
+        );
+        const ghiChuPhuTung =
+            mucDangChon === "parts"
+                ? '<p class="hint">Phụ tùng mới có tồn 0. Dùng Phiếu nhập để tăng tồn hoặc Điều chỉnh tồn khi kiểm kê.</p>'
+                : "";
+        if (mucDangChon !== cauHinhDanhMuc.id) return;
+        moHopThoai(
+            (dongDuLieu ? "Cập nhật · " : "Thêm · ") + cauHinhDanhMuc.title,
+            `<div class="form-grid">${cacTruong.join("")}</div>${ghiChuPhuTung}`,
+            async (duLieu) => {
+                const duLieuGui = Object.fromEntries(duLieu);
+                if (maDaCap) duLieuGui.maDaCap = maDaCap.ticket;
+                for (const truongNhap of cauHinhDanhMuc.fields)
+                    if (truongNhap.type === "bool")
+                        duLieuGui[truongNhap.name] = bieuMau.elements[truongNhap.name].checked;
+                const banGhi = await giaoTiep(
+                    "/api/catalog/" +
+                        cauHinhDanhMuc.id +
+                        (dongDuLieu
+                            ? "/" + encodeURIComponent(layKhoa(cauHinhDanhMuc, dongDuLieu))
+                            : ""),
+                    { method: dongDuLieu ? "PUT" : "POST", body: JSON.stringify(duLieuGui) },
+                );
+                return banGhi.message;
+            },
+        );
+    }
+    const giaoDienXemTruocPhieu = `<div class="detail-actions"><button class="button secondary" type="button" id="job-preview-button">Kiểm tra tiền và phụ tùng</button></div>
+    <div id="job-preview" aria-live="polite"></div>`;
+    const dongDichVuHopLe = (dongChiTiet) =>
+        dongChiTiet.serviceId &&
+        Number.isInteger(dongChiTiet.quantity) &&
+        dongChiTiet.quantity >= 1 &&
+        dongChiTiet.quantity <= 1000;
+
+    function ganXemTruocPhieu(layDuLieu) {
+        const nut = noiDungHopThoai.querySelector("#job-preview-button");
+        const vungKetQua = noiDungHopThoai.querySelector("#job-preview");
+        nut.addEventListener("click", async () => {
+            const duLieuNhap = layDuLieu();
+            const duDuLieu =
+                duLieuNhap.vehicleType &&
+                duLieuNhap.services.length &&
+                duLieuNhap.services.every(dongDichVuHopLe);
+            if (!duDuLieu) {
+                vungKetQua.textContent =
+                    "Nhập mẫu xe, chọn dịch vụ và số lượng hợp lệ để kiểm tra.";
+                return;
+            }
+            const guiYeuCau = JSON.stringify(duLieuNhap);
+            const conHienTai = () =>
+                nut.isConnected && hopThoai.open && guiYeuCau === JSON.stringify(layDuLieu());
+            nut.disabled = true;
+            vungKetQua.textContent = "Đang kiểm tra…";
+            try {
+                const ketQua = await giaoTiep("/api/workshop/jobs/preview", {
+                    method: "POST",
+                    body: guiYeuCau,
+                });
+                if (!conHienTai()) return;
+                const cacPhuTung = ketQua.parts.map((phuTung) => ({
+                    ...phuTung,
+                    issue: phuTung.issue || "Đủ",
+                }));
+                vungKetQua.innerHTML = `<div class="invoice-total">Tạm tính <b>${dinhDangTien(ketQua.total)}</b></div>${
+                    cacPhuTung.length
+                        ? taoBang(
+                              [
+                                  ["id", "Mã phụ tùng"],
+                                  ["name", "Phụ tùng"],
+                                  ["quantity", "Cần dùng"],
+                                  ["stock", "Tồn kho"],
+                                  ["issue", "Kiểm tra"],
+                              ],
+                              cacPhuTung,
+                          )
+                        : '<p class="hint">Các dịch vụ đã chọn không có định mức phụ tùng.</p>'
+                }
+          <p class="hint">Kho và giá được kiểm tra lại khi lưu phiếu.</p>`;
+            } catch (suKienNhap) {
+                if (conHienTai()) vungKetQua.textContent = suKienNhap.message;
+            } finally {
+                nut.disabled = false;
+            }
+        });
+        return () => vungKetQua.replaceChildren();
+    }
+
+    async function tiepNhanXe() {
+        const [cacLuaChonDichVu, cacTho] = await Promise.all([
+            layLuaChon("services"),
+            layLuaChon("mechanics"),
+        ]);
+        const layDuLieu = () => ({
+            vehicleType: bieuMau.elements.vehicleType.value.trim(),
+            services: [...noiDungHopThoai.querySelectorAll("#lines .line-row")].map(
+                (dongDuLieu) => ({
+                    serviceId: dongDuLieu.querySelector("select").value,
+                    quantity: Number(dongDuLieu.querySelector("input").value),
+                }),
+            ),
+        });
+        const cacTruong = [
+            taoTruongNhap(
+                "customerName",
+                "Họ tên khách hàng",
+                "text",
+                "",
+                'required maxlength="100"',
+            ),
+            taoTruongNhap(
+                "phone",
+                "Số điện thoại",
+                "tel",
+                "",
+                'required pattern="0[0-9]{8,10}" maxlength="11"',
+            ),
+            taoTruongNhap("licensePlate", "Biển số xe", "text", "", 'required maxlength="20"'),
+            taoTruongNhap(
+                "vehicleType",
+                "Mẫu xe",
+                "text",
+                "",
+                `required maxlength="50" ${goiYMauXe}`,
+            ),
+            taoTruongNhap("brand", "Hãng xe", "text", "", `required maxlength="50" ${goiYHangXe}`),
+            taoTruongNhap("color", "Màu sắc", "text", "", 'required maxlength="30"'),
+            taoTruongNhap(
+                "dueDate",
+                "Ngày hẹn trả",
+                "date",
+                homNay(),
+                `required min="${homNay()}"`,
+            ),
+            taoTruongChon("mechanicId", "Phân công thợ (có thể bổ sung sau)", cacTho, ""),
+        ].join("");
+
+        const noiDungForm = [
+            `<div class="form-grid">${cacTruong}</div>`,
+            `<h3 style="margin-top:24px">Dịch vụ thực hiện</h3>`,
+            `<div id="job-services"><div class="line-items" id="lines"></div>${taoNut("+ Thêm dịch vụ", "line-add")}</div>`,
+            giaoDienXemTruocPhieu,
+        ].join("");
+
+        moHopThoai(
+            "Tiếp nhận xe",
+            noiDungForm,
+            async (duLieu) => {
+                const duLieuNhap = Object.fromEntries(duLieu);
+                Object.assign(duLieuNhap, layDuLieu());
+                delete duLieuNhap.line;
+                const banGhi = await giaoTiep("/api/workshop/jobs", {
+                    method: "POST",
+                    body: JSON.stringify(duLieuNhap),
+                });
+                return banGhi.message + " Mã " + banGhi.id;
+            },
+            "Tiếp nhận và trừ kho",
+        );
+        noiDungHopThoai.dataset.lineOptions = cacLuaChonDichVu;
+        themDong();
+        const xoaXemTruoc = ganXemTruocPhieu(layDuLieu);
+        bieuMau.elements.vehicleType.addEventListener("input", xoaXemTruoc);
+        const cacTruongDichVu = noiDungHopThoai.querySelector("#job-services");
+        cacTruongDichVu.addEventListener("input", xoaXemTruoc);
+        cacTruongDichVu.addEventListener("click", (suKienNhap) => {
+            if (suKienNhap.target.closest('[data-action="line-add"], [data-action="line-remove"]'))
+                xoaXemTruoc();
+        });
+    }
+    function themDong() {
+        const danhSachDong = document.querySelector("#lines");
+        const soLuongToiDa = Number(danhSachDong.dataset.max) || 1000;
+
+        const dongMoi = `
       <div class="line-row">
-        <select required aria-label="Dịch vụ hoặc phụ tùng">${body.dataset.lineOptions}</select>
+        <select required aria-label="Dịch vụ hoặc phụ tùng">${noiDungHopThoai.dataset.lineOptions}</select>
         <input aria-label="Số lượng" type="number" value="1" min="1" max="${soLuongToiDa}" step="1" required />
         <button type="button" data-action="line-remove" aria-label="Xóa dòng">×</button>
       </div>`;
 
-    danhSachDong.insertAdjacentHTML("beforeend", dongMoi);
-  }
+        danhSachDong.insertAdjacentHTML("beforeend", dongMoi);
+    }
+    async function nhapKho() {
+        const luaChonPhuTung = await layLuaChon("parts");
 
-  // Người 4: form lập phiếu nhập kho nhiều dòng.
-  async function nhapKho() {
-    const luaChonPhuTung = await options("parts");
-
-    const noiDungForm = `
+        const noiDungForm = `
       <div class="form-grid">
-        ${field("date", "Ngày nhập", "date", today(), `required max="${today()}"`)}
-        ${field("note", "Ghi chú", "text", "", 'maxlength="255"')}
+        ${taoTruongNhap("date", "Ngày nhập", "date", homNay(), `required max="${homNay()}"`)}
+        ${taoTruongNhap("note", "Ghi chú", "text", "", 'maxlength="255"')}
       </div>
       <h3 style="margin-top:24px">Phụ tùng nhập</h3>
       <div class="line-items" id="lines" data-max="100000"></div>
-      ${btn("+ Thêm phụ tùng", "line-add")}
+      ${taoNut("+ Thêm phụ tùng", "line-add")}
       <p class="hint">
         Đơn giá lấy từ lô phụ tùng. Tạo mã lô mới khi giá nhập hoặc hạn sử dụng thay đổi.
         Phiếu đã ghi sổ giữ nguyên; sai lệch được xử lý bằng điều chỉnh tồn có lý do.
       </p>`;
 
-    async function luuPhieuNhap(duLieuForm) {
-      const phieuNhap = Object.fromEntries(duLieuForm);
+        async function luuPhieuNhap(duLieuForm) {
+            const phieuNhap = Object.fromEntries(duLieuForm);
+            phieuNhap.lines = [...noiDungHopThoai.querySelectorAll(".line-row")].map((dong) => ({
+                partId: dong.querySelector("select").value,
+                quantity: Number(dong.querySelector("input").value),
+            }));
 
-      // Mỗi dòng trên form thành một phụ tùng trong phiếu
-      phieuNhap.lines = [...body.querySelectorAll(".line-row")].map((dong) => ({
-        partId: dong.querySelector("select").value,
-        quantity: Number(dong.querySelector("input").value),
-      }));
+            const ketQua = await giaoTiep("/api/workshop/stock/purchases", {
+                method: "POST",
+                body: JSON.stringify(phieuNhap),
+            });
+            return ketQua.message;
+        }
 
-      const ketQua = await api("/api/workshop/stock/purchases", {
-        method: "POST",
-        body: JSON.stringify(phieuNhap),
-      });
-      return ketQua.message;
+        moHopThoai("Lập phiếu nhập kho", noiDungForm, luuPhieuNhap, "Lưu phiếu và cộng kho");
+
+        noiDungHopThoai.dataset.lineOptions = luaChonPhuTung;
+        themDong();
     }
+    async function xemPhieuNhap(maPhieuNhap) {
+        const duLieu = await giaoTiep(
+            "/api/workshop/stock/purchases/" + encodeURIComponent(maPhieuNhap),
+        );
 
-    moHopThoai("Lập phiếu nhập kho", noiDungForm, luuPhieuNhap, "Lưu phiếu và cộng kho");
+        let tongTienNhap = 0;
+        for (const dong of duLieu.lines) {
+            tongTienNhap += Number(dong.amount);
+        }
 
-    body.dataset.lineOptions = luaChonPhuTung;
-    themDong();
-  }
+        const bangChiTiet = taoBang(
+            [
+                ["partId", "Mã phụ tùng"],
+                ["name", "Tên"],
+                ["quantity", "Số lượng"],
+                ["price", "Đơn giá nhập", dinhDangTien],
+                ["amount", "Thành tiền", dinhDangTien],
+            ],
+            duLieu.lines,
+        );
 
-  // Người 4: xem chi tiết một phiếu nhập kèm tổng tiền.
-  async function xemPhieuNhap(maPhieuNhap) {
-    const duLieu = await api("/api/workshop/stock/purchases/" + encodeURIComponent(maPhieuNhap));
-
-    let tongTienNhap = 0;
-    for (const dong of duLieu.lines) {
-      tongTienNhap += Number(dong.amount);
+        moHopThoai(
+            "Chi tiết phiếu nhập " + maPhieuNhap,
+            bangChiTiet +
+                `<p class="hint"><strong>Tổng nhập: ${dinhDangTien(tongTienNhap)}</strong></p>`,
+        );
     }
+    async function kiemKeTon() {
+        const luaChonPhuTung = await layLuaChon("parts");
 
-    const bangChiTiet = taoBang(
-      [
-        ["partId", "Mã phụ tùng"],
-        ["name", "Tên"],
-        ["quantity", "Số lượng"],
-        ["price", "Đơn giá nhập", money],
-        ["amount", "Thành tiền", money],
-      ],
-      duLieu.lines,
-    );
-
-    moHopThoai(
-      "Chi tiết phiếu nhập " + maPhieuNhap,
-      bangChiTiet + `<p class="hint"><strong>Tổng nhập: ${money(tongTienNhap)}</strong></p>`,
-    );
-  }
-
-  // Người 4: kiểm kê, nhập số tồn đếm thực tế và lý do điều chỉnh.
-  async function kiemKeTon() {
-    const luaChonPhuTung = await options("parts");
-
-    const noiDungForm = `
+        const noiDungForm = `
       <div class="form-grid">
-        ${selectField("partId", "Phụ tùng", luaChonPhuTung)}
-        ${field("stock", "Số tồn thực tế", "number", "", 'required min="0" max="1000000" step="1"')}
-        ${field("reason", "Lý do điều chỉnh", "text", "", 'required minlength="5" maxlength="255"')}
+        ${taoTruongChon("partId", "Phụ tùng", luaChonPhuTung)}
+        ${taoTruongNhap("stock", "Số tồn thực tế", "number", "", 'required min="0" max="1000000" step="1"')}
+        ${taoTruongNhap("reason", "Lý do điều chỉnh", "text", "", 'required minlength="5" maxlength="255"')}
       </div>`;
 
-    async function luuKiemKe(duLieuForm) {
-      const kiemKe = Object.fromEntries(duLieuForm);
-      kiemKe.stock = Number(kiemKe.stock);
+        async function luuKiemKe(duLieuForm) {
+            const kiemKe = Object.fromEntries(duLieuForm);
+            kiemKe.stock = Number(kiemKe.stock);
 
-      const ketQua = await api("/api/workshop/stock/adjust", {
-        method: "POST",
-        body: JSON.stringify(kiemKe),
-      });
-      return ketQua.message;
+            const ketQua = await giaoTiep("/api/workshop/stock/adjust", {
+                method: "POST",
+                body: JSON.stringify(kiemKe),
+            });
+            return ketQua.message;
+        }
+
+        moHopThoai("Điều chỉnh tồn sau kiểm kê", noiDungForm, luuKiemKe);
     }
+    async function xemPhieu(maBanGhi, chiHoaDon = false) {
+        const duLieu = await giaoTiep("/api/workshop/jobs/" + encodeURIComponent(maBanGhi)),
+            chiSoPhu = duLieu.job;
+        const dauHoaDon = chiHoaDon
+            ? [
+                  `<div class="invoice-heading">`,
+                  `<span class="eyebrow">CỬA HÀNG SỬA XE · DỊCH VỤ SỬA XE</span>`,
+                  `<h2>HÓA ĐƠN THANH TOÁN</h2>`,
+                  `<p>${maHoaHtml(duLieu.invoice?.id || "")}</p>`,
+                  `</div>`,
+              ].join("")
+            : "";
 
-    moHopThoai("Điều chỉnh tồn sau kiểm kê", noiDungForm, luuKiemKe);
-  }
-  async function xemPhieu(id, invoiceOnly = false) {
-    const d = await api("/api/workshop/jobs/" + encodeURIComponent(id)),
-      j = d.job;
-    // Phần đầu hóa đơn (chỉ khi xem/in hóa đơn)
-    const dauHoaDon = invoiceOnly
-      ? [
-          `<div class="invoice-heading">`,
-          `<span class="eyebrow">CỬA HÀNG SỬA XE · DỊCH VỤ SỬA XE</span>`,
-          `<h2>HÓA ĐƠN THANH TOÁN</h2>`,
-          `<p>${esc(d.invoice?.id || "")}</p>`,
-          `</div>`,
-        ].join("")
-      : "";
+        const thongTinPhieu = [
+            ["Mã phiếu", chiSoPhu.id],
+            ["Khách hàng", chiSoPhu.customerName],
+            ["Số điện thoại", chiSoPhu.phone],
+            ["Biển số", chiSoPhu.licensePlate],
+            ["Ngày nhận", dinhDangNgay(chiSoPhu.createdOn)],
+            ["Hẹn trả", dinhDangNgay(chiSoPhu.dueDate)],
+        ]
+            .map(
+                ([tenCot, giaTriTruong]) =>
+                    `<div><label>${tenCot}</label><b>${maHoaHtml(giaTriTruong)}</b></div>`,
+            )
+            .join("");
 
-    const thongTinPhieu = [
-      ["Mã phiếu", j.id],
-      ["Khách hàng", j.customerName],
-      ["Số điện thoại", j.phone],
-      ["Biển số", j.licensePlate],
-      ["Ngày nhận", date(j.createdOn)],
-      ["Hẹn trả", date(j.dueDate)],
-    ]
-      .map(([k, v]) => `<div><label>${k}</label><b>${esc(v)}</b></div>`)
-      .join("");
+        const bangDichVu = taoBang(
+            [
+                ["serviceId", "Mã dịch vụ"],
+                ["name", "Tên dịch vụ"],
+                ["quantity", "Số lượng"],
+                ["amount", "Thành tiền", dinhDangTien],
+            ],
+            duLieu.lines,
+        );
 
-    const bangDichVu = taoBang(
-      [
-        ["serviceId", "Mã dịch vụ"],
-        ["name", "Tên dịch vụ"],
-        ["quantity", "Số lượng"],
-        ["amount", "Thành tiền", money],
-      ],
-      d.lines,
-    );
+        let noiDungHtml =
+            dauHoaDon +
+            `<div class="detail-grid">${thongTinPhieu}</div>` +
+            bangDichVu +
+            `<div class="invoice-total">Tổng cộng: <b>${dinhDangTien(chiSoPhu.total)}</b></div>`;
 
-    let html =
-      dauHoaDon +
-      `<div class="detail-grid">${thongTinPhieu}</div>` +
-      bangDichVu +
-      `<div class="invoice-total">Tổng cộng: <b>${money(j.total)}</b></div>`;
+        if (chiHoaDon) {
+            noiDungHtml += [
+                `<p>Ngày thanh toán: <b>${dinhDangNgay(duLieu.invoice?.paidOn)}</b></p>`,
+                `<p class="hint">Hóa đơn nội bộ phục vụ bài tập, không phải hóa đơn điện tử thuế.</p>`,
+                `<div class="detail-actions no-print">${taoNut("In hóa đơn", "print", "", "primary")}</div>`,
+            ].join("");
+            moHopThoai("Hóa đơn · " + (duLieu.invoice?.id || chiSoPhu.id), noiDungHtml);
+            return;
+        }
+        const ngayGio = (giaTriTruong) =>
+            `${dinhDangNgay(giaTriTruong)} ${maHoaHtml(String(giaTriTruong).slice(11, 16))}`;
+        const nutBoPhanCong =
+            duocTiepNhan && chiSoPhu.status === "Chờ sửa"
+                ? (banGhi) =>
+                      taoNut("Bỏ phân công", "unassign", chiSoPhu.id + "~" + banGhi.employeeId)
+                : null;
+        const bangPhanCong = taoBang(
+            [
+                ["name", "Nhân viên"],
+                ["start", "Bắt đầu", ngayGio],
+                ["end", "Dự kiến xong", ngayGio],
+            ],
+            duLieu.assignments,
+            nutBoPhanCong,
+        );
+        const dangXuLy = ["Chờ sửa", "Đang sửa"].includes(chiSoPhu.status);
+        const cacNut = [
+            duocTiepNhan && dangXuLy
+                ? taoNut("Phân công / đổi giờ", "assign", maBanGhi) +
+                  taoNut("Sửa ngày hẹn", "due-date", maBanGhi)
+                : "",
+            chiSoPhu.status === "Chờ sửa"
+                ? taoNut("Bắt đầu sửa", "status", maBanGhi + "~Đang sửa", "primary")
+                : "",
+            chiSoPhu.status === "Đang sửa"
+                ? taoNut("Hoàn thành", "status", maBanGhi + "~Hoàn thành", "primary")
+                : "",
+            duocTiepNhan && chiSoPhu.status === "Chờ sửa"
+                ? taoNut("Hủy và hoàn kho", "status", maBanGhi + "~Đã hủy", "danger")
+                : "",
+            duocTiepNhan && chiSoPhu.status === "Hoàn thành" && !chiSoPhu.paid
+                ? taoNut("Lập hóa đơn / Thu tiền", "payment", maBanGhi, "primary")
+                : "",
+            duocTiepNhan && chiSoPhu.paid
+                ? taoNut("Xem / In hóa đơn", "print-invoice", maBanGhi)
+                : "",
+        ].join("");
 
-    if (invoiceOnly) {
-      html += [
-        `<p>Ngày thanh toán: <b>${date(d.invoice?.paidOn)}</b></p>`,
-        `<p class="hint">Hóa đơn nội bộ phục vụ bài tập, không phải hóa đơn điện tử thuế.</p>`,
-        `<div class="detail-actions no-print">${btn("In hóa đơn", "print", "", "primary")}</div>`,
-      ].join("");
-      moHopThoai("Hóa đơn · " + (d.invoice?.id || j.id), html);
-      return;
+        noiDungHtml += `<h3>Phân công thợ</h3>${bangPhanCong}<div class="detail-actions">${cacNut}</div>`;
+        moHopThoai("Phiếu " + maBanGhi + " · " + chiSoPhu.status, noiDungHtml);
     }
+    async function nhanLich(maBanGhi) {
+        const booking = cacDongHienTai.find((dongDuLieu) => dongDuLieu.id === maBanGhi);
+        if (!booking) throw new Error("Lịch hẹn không còn trong danh sách. Hãy tải lại.");
+        const cacTho = await layLuaChon("mechanics");
+        const cacTruong = [
+            taoTruongNhap(
+                "dueDate",
+                "Ngày hẹn trả",
+                "date",
+                homNay(),
+                `required min="${homNay()}"`,
+            ),
+            taoTruongNhap("color", "Màu xe", "text", "", 'required maxlength="30"'),
+            taoTruongChon("mechanicId", "Thợ phụ trách", cacTho, ""),
+        ].join("");
 
-    // Bảng phân công: chỉ bỏ phân công được khi phiếu còn Chờ sửa
-    const ngayGio = (v) => `${date(v)} ${esc(String(v).slice(11, 16))}`;
-    const nutBoPhanCong =
-      canReceive && j.status === "Chờ sửa"
-        ? (r) => btn("Bỏ phân công", "unassign", j.id + "~" + r.employeeId)
-        : null;
-    const bangPhanCong = taoBang(
-      [
-        ["name", "Nhân viên"],
-        ["start", "Bắt đầu", ngayGio],
-        ["end", "Dự kiến xong", ngayGio],
-      ],
-      d.assignments,
-      nutBoPhanCong,
-    );
+        const noiDungForm = [
+            `<p>Xe <b>${maHoaHtml(booking.brand)} ${maHoaHtml(booking.vehicleType)}</b> · ${maHoaHtml(booking.licensePlate)}</p>`,
+            `<p>Dịch vụ <b>${maHoaHtml(booking.service)}</b></p>`,
+            `<div class="form-grid">${cacTruong}</div>`,
+            giaoDienXemTruocPhieu,
+        ].join("");
 
-    // Các nút thao tác theo trạng thái phiếu và quyền
-    const dangXuLy = ["Chờ sửa", "Đang sửa"].includes(j.status);
-    const cacNut = [
-      canReceive && dangXuLy ? btn("Phân công / đổi giờ", "assign", id) + btn("Sửa ngày hẹn", "due-date", id) : "",
-      j.status === "Chờ sửa" ? btn("Bắt đầu sửa", "status", id + "~Đang sửa", "primary") : "",
-      j.status === "Đang sửa" ? btn("Hoàn thành", "status", id + "~Hoàn thành", "primary") : "",
-      canReceive && j.status === "Chờ sửa" ? btn("Hủy và hoàn kho", "status", id + "~Đã hủy", "danger") : "",
-      canReceive && j.status === "Hoàn thành" && !j.paid ? btn("Lập hóa đơn / Thu tiền", "payment", id, "primary") : "",
-      canReceive && j.paid ? btn("Xem / In hóa đơn", "print-invoice", id) : "",
-    ].join("");
-
-    html += `<h3>Phân công thợ</h3>${bangPhanCong}<div class="detail-actions">${cacNut}</div>`;
-    moHopThoai("Phiếu " + id + " · " + j.status, html);
-  }
-  async function nhanLich(id) {
-    const booking = current.find((row) => row.id === id);
-    if (!booking) throw new Error("Lịch hẹn không còn trong danh sách. Hãy tải lại.");
-    const mechanics = await options("mechanics");
-    const cacTruong = [
-      field("dueDate", "Ngày hẹn trả", "date", today(), `required min="${today()}"`),
-      field("color", "Màu xe", "text", "", 'required maxlength="30"'),
-      selectField("mechanicId", "Thợ phụ trách", mechanics, ""),
-    ].join("");
-
-    const noiDungForm = [
-      `<p>Xe <b>${esc(booking.brand)} ${esc(booking.vehicleType)}</b> · ${esc(booking.licensePlate)}</p>`,
-      `<p>Dịch vụ <b>${esc(booking.service)}</b></p>`,
-      `<div class="form-grid">${cacTruong}</div>`,
-      xemTruocPhieuMarkup,
-    ].join("");
-
-    moHopThoai(
-      "Tiếp nhận lịch " + id,
-      noiDungForm,
-      async (d) =>
-        (
-          await api(
-            "/api/workshop/bookings/" + encodeURIComponent(id) + "/accept",
-            { method: "POST", body: JSON.stringify(Object.fromEntries(d)) },
-          )
-        ).message,
-      "Tiếp nhận và trừ kho",
-    );
-    ganXemTruocPhieu(() => ({
-      vehicleType: booking.vehicleType,
-      services: [{ serviceId: booking.serviceId, quantity: 1 }],
-    }));
-  }
-  function xacNhan(title, text, callback) {
-    moHopThoai(
-      title,
-      `<p>${esc(text)}</p>`,
-      async () => {
-        const r = await callback();
-        return r?.message;
-      },
-      "Xác nhận",
-    );
-  }
-  function locNoiDung(value) {
-    value = String(value || "")
-      .replace(/<(\/?)b\s*>/gi, "<$1strong>")
-      .replace(/<(\/?)i\s*>/gi, "<$1em>");
-    const doc = new DOMParser().parseFromString(
-      String(value || ""),
-      "text/html",
-    );
-    const allowed = new Set(["P", "BR", "STRONG", "EM", "UL", "OL", "LI"]);
-    function copy(n) {
-      if (n.nodeType === 3) return document.createTextNode(n.textContent);
-      const el = allowed.has(n.nodeName)
-        ? document.createElement(n.nodeName.toLowerCase())
-        : document.createDocumentFragment();
-      if (["SCRIPT", "STYLE", "IFRAME", "SVG", "OBJECT"].includes(n.nodeName))
-        return el;
-      for (const child of n.childNodes) el.append(copy(child));
-      return el;
+        moHopThoai(
+            "Tiếp nhận lịch " + maBanGhi,
+            noiDungForm,
+            async (duLieu) =>
+                (
+                    await giaoTiep(
+                        "/api/workshop/bookings/" + encodeURIComponent(maBanGhi) + "/accept",
+                        { method: "POST", body: JSON.stringify(Object.fromEntries(duLieu)) },
+                    )
+                ).message,
+            "Tiếp nhận và trừ kho",
+        );
+        ganXemTruocPhieu(() => ({
+            vehicleType: booking.vehicleType,
+            services: [{ serviceId: booking.serviceId, quantity: 1 }],
+        }));
     }
-    const wrap = document.createElement("div");
-    for (const n of doc.body.childNodes) wrap.append(copy(n));
-    return wrap.innerHTML;
-  }
-  async function suaNoiDungDichVu(id) {
-    const d = await api(
-      "/api/workshop/services/" + encodeURIComponent(id) + "/content",
-    );
-    const ghiChuAnh = d.imageUrl ? "Đang dùng ảnh đã lưu." : "Chưa có ảnh riêng.";
-    const thanhCongCu = btn("B · Đậm", "bold") + btn("I · Nghiêng", "italic") + btn("• Danh sách", "list");
-
-    const noiDungForm = [
-      // Chọn ảnh → tải lên ngay, đường dẫn ảnh lưu vào ô ẩn imageUrl
-      `<label class="field"><span>Ảnh JPG/PNG/WebP, tối đa 2 MB</span><input type="file" id="service-image" accept="image/jpeg,image/png,image/webp"/></label>`,
-      `<input type="hidden" name="imageUrl" value="${esc(d.imageUrl)}"/>`,
-      `<div id="image-note" class="hint">${ghiChuAnh}</div>`,
-      // Editor: vùng contenteditable, khi lưu nội dung được lọc HTML rồi chép vào textarea ẩn
-      `<div class="editor-tools">${thanhCongCu}</div>`,
-      `<textarea id="mo-ta-html" name="description" hidden></textarea>`,
-      `<div contenteditable="true" role="textbox" aria-label="Nội dung dịch vụ" class="content-editor" id="rich-editor">${locNoiDung(d.description)}</div>`,
-      `<p class="hint">Nội dung hiển thị công khai ở trang dịch vụ. Chỉ giữ các định dạng văn bản an toàn.</p>`,
-    ].join("");
-
-    moHopThoai(
-      "Ảnh và nội dung dịch vụ",
-      noiDungForm,
-      async (f) =>
-        (
-          await api(
-            "/api/workshop/services/" + encodeURIComponent(id) + "/content",
-            {
-              method: "PUT",
-              body: JSON.stringify({
-                description: (document.querySelector("#mo-ta-html").value =
-                  locNoiDung(document.querySelector("#rich-editor").innerHTML)),
-                imageUrl: f.get("imageUrl"),
-              }),
+    function xacNhan(tieuDeNhap, noiDung, hamXuLy) {
+        moHopThoai(
+            tieuDeNhap,
+            `<p>${maHoaHtml(noiDung)}</p>`,
+            async () => {
+                const banGhi = await hamXuLy();
+                return banGhi?.message;
             },
-          )
-        ).message,
-    );
-    document.querySelector("#service-image").onchange = async (e) => {
-      if (!e.target.files[0]) return;
-      const f = new FormData();
-      f.append("image", e.target.files[0]);
-      save.disabled = true;
-      try {
-        const result = await api("/api/services/image", {
-          method: "POST",
-          body: f,
-        });
-        form.elements.imageUrl.value = result.imageUrl;
-        document.querySelector("#image-note").textContent =
-          "Ảnh đã tải lên. Bấm Lưu thông tin để áp dụng.";
-      } catch (e) {
-        error.textContent = e.message;
-      } finally {
-        save.disabled = false;
-      }
-    };
-  }
-  async function xuLyThaoTac(action, id, target) {
-    if (action === "reload") return taiDuLieu();
-    if (action === "reset") {
-      q = "";
-      from = "";
-      to = "";
-      status = "";
-      page = 1;
-      return taiDuLieu();
+            "Xác nhận",
+        );
     }
-    if (action === "prev") {
-      page--;
-      return taiDuLieu();
+    function locNoiDung(giaTriNhap) {
+        giaTriNhap = String(giaTriNhap || "")
+            .replace(/<(\/?)b\s*>/gi, "<$1strong>")
+            .replace(/<(\/?)i\s*>/gi, "<$1em>");
+        const taiLieu = new DOMParser().parseFromString(String(giaTriNhap || ""), "text/html");
+        const cacTheChoPhep = new Set(["P", "BR", "STRONG", "EM", "UL", "OL", "LI"]);
+        function saoChep(soLuong) {
+            if (soLuong.nodeType === 3) return document.createTextNode(soLuong.textContent);
+            const phanTu = cacTheChoPhep.has(soLuong.nodeName)
+                ? document.createElement(soLuong.nodeName.toLowerCase())
+                : document.createDocumentFragment();
+            if (["SCRIPT", "STYLE", "IFRAME", "SVG", "OBJECT"].includes(soLuong.nodeName))
+                return phanTu;
+            for (const phanTuCon of soLuong.childNodes) phanTu.append(saoChep(phanTuCon));
+            return phanTu;
+        }
+        const khungBao = document.createElement("div");
+        for (const soLuong of taiLieu.body.childNodes) khungBao.append(saoChep(soLuong));
+        return khungBao.innerHTML;
     }
-    if (action === "next") {
-      page++;
-      return taiDuLieu();
+    async function suaNoiDungDichVu(maBanGhi) {
+        const duLieu = await giaoTiep(
+            "/api/workshop/services/" + encodeURIComponent(maBanGhi) + "/content",
+        );
+        const ghiChuAnh = duLieu.imageUrl ? "Đang dùng ảnh đã lưu." : "Chưa có ảnh riêng.";
+        const thanhCongCu =
+            taoNut("B · Đậm", "bold") +
+            taoNut("I · Nghiêng", "italic") +
+            taoNut("• Danh sách", "list");
+
+        const noiDungForm = [
+            `<label class="field"><span>Ảnh JPG/PNG/WebP, tối đa 2 MB</span><input type="file" id="service-image" accept="image/jpeg,image/png,image/webp"/></label>`,
+            `<input type="hidden" name="imageUrl" value="${maHoaHtml(duLieu.imageUrl)}"/>`,
+            `<div id="image-note" class="hint">${ghiChuAnh}</div>`,
+            `<div class="editor-tools">${thanhCongCu}</div>`,
+            `<textarea id="mo-ta-html" name="description" hidden></textarea>`,
+            `<div contenteditable="true" role="textbox" aria-label="Nội dung dịch vụ" class="content-editor" id="rich-editor">${locNoiDung(duLieu.description)}</div>`,
+            `<p class="hint">Nội dung hiển thị công khai ở trang dịch vụ. Chỉ giữ các định dạng văn bản an toàn.</p>`,
+        ].join("");
+
+        moHopThoai(
+            "Ảnh và nội dung dịch vụ",
+            noiDungForm,
+            async (truongNhap) =>
+                (
+                    await giaoTiep(
+                        "/api/workshop/services/" + encodeURIComponent(maBanGhi) + "/content",
+                        {
+                            method: "PUT",
+                            body: JSON.stringify({
+                                description: (document.querySelector("#mo-ta-html").value =
+                                    locNoiDung(document.querySelector("#rich-editor").innerHTML)),
+                                imageUrl: truongNhap.get("imageUrl"),
+                            }),
+                        },
+                    )
+                ).message,
+        );
+        document.querySelector("#service-image").onchange = async (suKienNhap) => {
+            if (!suKienNhap.target.files[0]) return;
+            const truongNhap = new FormData();
+            truongNhap.append("image", suKienNhap.target.files[0]);
+            nutLuu.disabled = true;
+            try {
+                const ketQua = await giaoTiep("/api/services/image", {
+                    method: "POST",
+                    body: truongNhap,
+                });
+                bieuMau.elements.imageUrl.value = ketQua.imageUrl;
+                document.querySelector("#image-note").textContent =
+                    "Ảnh đã tải lên. Bấm Lưu thông tin để áp dụng.";
+            } catch (suKienNhap) {
+                loi.textContent = suKienNhap.message;
+            } finally {
+                nutLuu.disabled = false;
+            }
+        };
     }
-    if (action === "create")
-      return section === "jobs"
-        ? tiepNhanXe()
-        : section === "purchases"
-          ? nhapKho()
-          : suaDanhMuc(null);
-    if (action === "create-job") return tiepNhanXe();
-    if (action === "customer-vehicles") return xemXeCuaKhach(current[Number(id)], target);
-    if (action === "edit") return suaDanhMuc(Number(id));
-    if (action === "delete") {
-      const spec = specs.find((s) => s.id === section),
-        row = current[Number(id)],
-        code = layKhoa(spec, row);
-      return xacNhan(
-        "Xóa bản ghi",
-        "Xóa " +
-          code +
-          "? Bản ghi đã được dùng trong nghiệp vụ sẽ được bảo vệ bởi liên kết dữ liệu.",
-        () =>
-          api("/api/catalog/" + section + "/" + encodeURIComponent(code), {
-            method: "DELETE",
-          }),
-      );
+    async function xuLyThaoTac(thaoTac, maBanGhi, phanTuDich) {
+        if (thaoTac === "reload") return taiDuLieu();
+        if (thaoTac === "reset") {
+            tuKhoa = "";
+            tuNgay = "";
+            denNgay = "";
+            trangThaiLoc = "";
+            trang = 1;
+            return taiDuLieu();
+        }
+        if (thaoTac === "prev") {
+            trang--;
+            return taiDuLieu();
+        }
+        if (thaoTac === "next") {
+            trang++;
+            return taiDuLieu();
+        }
+        if (thaoTac === "create")
+            return mucDangChon === "jobs"
+                ? tiepNhanXe()
+                : mucDangChon === "purchases"
+                  ? nhapKho()
+                  : suaDanhMuc(null);
+        if (thaoTac === "create-job") return tiepNhanXe();
+        if (thaoTac === "customer-vehicles")
+            return xemXeCuaKhach(cacDongHienTai[Number(maBanGhi)], phanTuDich);
+        if (thaoTac === "edit") return suaDanhMuc(Number(maBanGhi));
+        if (thaoTac === "delete") {
+            const cauHinhDanhMuc = cacCauHinhDanhMuc.find(
+                    (giaTriTrangThai) => giaTriTrangThai.id === mucDangChon,
+                ),
+                dongDuLieu = cacDongHienTai[Number(maBanGhi)],
+                maBanGhi = layKhoa(cauHinhDanhMuc, dongDuLieu);
+            return xacNhan(
+                "Xóa bản ghi",
+                "Xóa " +
+                    maBanGhi +
+                    "? Bản ghi đã được dùng trong nghiệp vụ sẽ được bảo vệ bởi liên kết dữ liệu.",
+                () =>
+                    giaoTiep("/api/catalog/" + mucDangChon + "/" + encodeURIComponent(maBanGhi), {
+                        method: "DELETE",
+                    }),
+            );
+        }
+        if (thaoTac === "job") return xemPhieu(maBanGhi);
+        if (thaoTac === "accept") return nhanLich(maBanGhi);
+        if (thaoTac === "reject")
+            return xacNhan("Hủy lịch hẹn", "Hủy yêu cầu chưa tiếp nhận này?", () =>
+                giaoTiep("/api/workshop/bookings/" + encodeURIComponent(maBanGhi) + "/reject", {
+                    method: "POST",
+                }),
+            );
+        if (thaoTac === "line-add") return themDong();
+        if (thaoTac === "line-remove") {
+            phanTuDich.closest(".line-row").remove();
+            return;
+        }
+        if (thaoTac === "status") {
+            const [phieuSua, trangThaiLoc] = maBanGhi.split("~");
+            return xacNhan(
+                "Cập nhật tiến độ",
+                trangThaiLoc === "Đã hủy"
+                    ? "Hủy phiếu và hoàn lại phụ tùng đã xuất?"
+                    : "Chuyển phiếu sang “" + trangThaiLoc + "”?",
+                () =>
+                    giaoTiep("/api/workshop/jobs/" + phieuSua + "/status", {
+                        method: "PUT",
+                        body: JSON.stringify({ status: trangThaiLoc }),
+                    }),
+            );
+        }
+        if (thaoTac === "assign") {
+            const cacLuaChon = await layLuaChon("mechanics");
+            const cacTruong = [
+                taoTruongChon("employeeId", "Thợ phụ trách", cacLuaChon),
+                taoTruongNhap(
+                    "start",
+                    "Bắt đầu",
+                    "datetime-local",
+                    homNay() + "T08:00",
+                    "required",
+                ),
+                taoTruongNhap(
+                    "end",
+                    "Kết thúc dự kiến",
+                    "datetime-local",
+                    homNay() + "T17:00",
+                    "required",
+                ),
+            ].join("");
+            return moHopThoai(
+                "Phân công thợ",
+                `<div class="form-grid">${cacTruong}</div>` +
+                    `<p class="hint">Thợ chính tối đa 3 xe đang xử lý, thợ phụ tối đa 2 xe. Chọn lại cùng thợ để cập nhật thời gian.</p>`,
+                async (duLieu) =>
+                    (
+                        await giaoTiep("/api/workshop/jobs/" + maBanGhi + "/assign", {
+                            method: "POST",
+                            body: JSON.stringify(Object.fromEntries(duLieu)),
+                        })
+                    ).message,
+            );
+        }
+        if (thaoTac === "unassign") {
+            const [phieuSua, nhanVien] = maBanGhi.split("~");
+            return xacNhan("Bỏ phân công", "Bỏ thợ này khỏi phiếu đang chờ sửa?", () =>
+                giaoTiep("/api/workshop/jobs/" + phieuSua + "/assign/" + nhanVien, {
+                    method: "DELETE",
+                }),
+            );
+        }
+        if (thaoTac === "due-date")
+            return moHopThoai(
+                "Cập nhật ngày hẹn",
+                taoTruongNhap(
+                    "dueDate",
+                    "Ngày hẹn trả",
+                    "date",
+                    homNay(),
+                    `required min="${homNay()}"`,
+                ),
+                async (duLieu) =>
+                    (
+                        await giaoTiep("/api/workshop/jobs/" + maBanGhi + "/due-date", {
+                            method: "PUT",
+                            body: JSON.stringify(Object.fromEntries(duLieu)),
+                        })
+                    ).message,
+            );
+        if (thaoTac === "payment") {
+            const duLieu = await giaoTiep("/api/workshop/jobs/" + maBanGhi);
+            const ngayLapPhieu = String(duLieu.job.createdOn).slice(0, 10);
+            const noiDungForm = [
+                `<p>Khách hàng: <b>${maHoaHtml(duLieu.job.customerName)}</b></p>`,
+                `<p>Tổng tiền cần thu: <b>${dinhDangTien(duLieu.job.total)}</b></p>`,
+                taoTruongNhap(
+                    "paidOn",
+                    "Ngày thanh toán",
+                    "date",
+                    homNay(),
+                    `required max="${homNay()}" min="${ngayLapPhieu}"`,
+                ),
+                `<p class="hint">Xác nhận khi đã nhận đủ tiền. Tổng tiền lấy từ chi tiết phiếu, không nhập lại thủ công.</p>`,
+            ].join("");
+            return moHopThoai(
+                "Thu tiền phiếu " + maBanGhi,
+                noiDungForm,
+                async (truongNhap) =>
+                    (
+                        await giaoTiep("/api/workshop/jobs/" + maBanGhi + "/invoice", {
+                            method: "POST",
+                            body: JSON.stringify(Object.fromEntries(truongNhap)),
+                        })
+                    ).message,
+                "Xác nhận đã thu tiền",
+            );
+        }
+        if (thaoTac === "print-invoice") return xemPhieu(maBanGhi, true);
+        if (thaoTac === "print") return window.print();
+        if (thaoTac === "purchase-detail") return xemPhieuNhap(maBanGhi);
+        if (thaoTac === "stock-adjust") return kiemKeTon();
+        if (thaoTac === "password")
+            return moHopThoai(
+                "Đổi mật khẩu",
+                `<div class="form-grid">` +
+                    taoTruongNhap(
+                        "oldPassword",
+                        "Mật khẩu hiện tại",
+                        "password",
+                        "",
+                        'required autocomplete="current-password"',
+                    ) +
+                    taoTruongNhap(
+                        "newPassword",
+                        "Mật khẩu mới",
+                        "password",
+                        "",
+                        'required minlength="6" maxlength="100" autocomplete="new-password"',
+                    ) +
+                    `</div>`,
+                async (duLieu) =>
+                    (
+                        await giaoTiep("/api/auth/password", {
+                            method: "PUT",
+                            body: JSON.stringify(Object.fromEntries(duLieu)),
+                        })
+                    ).message,
+            );
+        if (thaoTac === "content") return suaNoiDungDichVu(maBanGhi);
+        if (["bold", "italic", "list"].includes(thaoTac)) {
+            document.querySelector("#rich-editor").focus();
+            document.execCommand(thaoTac === "list" ? "insertUnorderedList" : thaoTac);
+        }
     }
-    if (action === "job") return xemPhieu(id);
-    if (action === "accept") return nhanLich(id);
-    if (action === "reject")
-      return xacNhan("Hủy lịch hẹn", "Hủy yêu cầu chưa tiếp nhận này?", () =>
-        api("/api/workshop/bookings/" + encodeURIComponent(id) + "/reject", {
-          method: "POST",
-        }),
-      );
-    if (action === "line-add") return themDong();
-    if (action === "line-remove") {
-      target.closest(".line-row").remove();
-      return;
-    }
-    if (action === "status") {
-      const [job, status] = id.split("~");
-      return xacNhan(
-        "Cập nhật tiến độ",
-        status === "Đã hủy"
-          ? "Hủy phiếu và hoàn lại phụ tùng đã xuất?"
-          : "Chuyển phiếu sang “" + status + "”?",
-        () =>
-          api("/api/workshop/jobs/" + job + "/status", {
-            method: "PUT",
-            body: JSON.stringify({ status }),
-          }),
-      );
-    }
-    if (action === "assign") {
-      const choices = await options("mechanics");
-      const cacTruong = [
-        selectField("employeeId", "Thợ phụ trách", choices),
-        field("start", "Bắt đầu", "datetime-local", today() + "T08:00", "required"),
-        field("end", "Kết thúc dự kiến", "datetime-local", today() + "T17:00", "required"),
-      ].join("");
-      return moHopThoai(
-        "Phân công thợ",
-        `<div class="form-grid">${cacTruong}</div>` +
-          `<p class="hint">Thợ chính tối đa 3 xe đang xử lý, thợ phụ tối đa 2 xe. Chọn lại cùng thợ để cập nhật thời gian.</p>`,
-        async (d) =>
-          (
-            await api("/api/workshop/jobs/" + id + "/assign", {
-              method: "POST",
-              body: JSON.stringify(Object.fromEntries(d)),
-            })
-          ).message,
-      );
-    }
-    if (action === "unassign") {
-      const [job, employee] = id.split("~");
-      return xacNhan(
-        "Bỏ phân công",
-        "Bỏ thợ này khỏi phiếu đang chờ sửa?",
-        () =>
-          api("/api/workshop/jobs/" + job + "/assign/" + employee, {
-            method: "DELETE",
-          }),
-      );
-    }
-    if (action === "due-date")
-      return moHopThoai(
-        "Cập nhật ngày hẹn",
-        field(
-          "dueDate",
-          "Ngày hẹn trả",
-          "date",
-          today(),
-          `required min="${today()}"`,
-        ),
-        async (d) =>
-          (
-            await api("/api/workshop/jobs/" + id + "/due-date", {
-              method: "PUT",
-              body: JSON.stringify(Object.fromEntries(d)),
-            })
-          ).message,
-      );
-    if (action === "payment") {
-      const d = await api("/api/workshop/jobs/" + id);
-      // Ngày thu: từ ngày lập phiếu đến hôm nay
-      const ngayLapPhieu = String(d.job.createdOn).slice(0, 10);
-      const noiDungForm = [
-        `<p>Khách hàng: <b>${esc(d.job.customerName)}</b></p>`,
-        `<p>Tổng tiền cần thu: <b>${money(d.job.total)}</b></p>`,
-        field("paidOn", "Ngày thanh toán", "date", today(), `required max="${today()}" min="${ngayLapPhieu}"`),
-        `<p class="hint">Xác nhận khi đã nhận đủ tiền. Tổng tiền lấy từ chi tiết phiếu, không nhập lại thủ công.</p>`,
-      ].join("");
-      return moHopThoai(
-        "Thu tiền phiếu " + id,
-        noiDungForm,
-        async (f) =>
-          (
-            await api("/api/workshop/jobs/" + id + "/invoice", {
-              method: "POST",
-              body: JSON.stringify(Object.fromEntries(f)),
-            })
-          ).message,
-        "Xác nhận đã thu tiền",
-      );
-    }
-    if (action === "print-invoice") return xemPhieu(id, true);
-    if (action === "print") return window.print();
-    if (action === "purchase-detail") return xemPhieuNhap(id);
-    if (action === "stock-adjust") return kiemKeTon();
-    if (action === "password")
-      return moHopThoai(
-        "Đổi mật khẩu",
-        `<div class="form-grid">` +
-          field("oldPassword", "Mật khẩu hiện tại", "password", "", 'required autocomplete="current-password"') +
-          field("newPassword", "Mật khẩu mới", "password", "", 'required minlength="6" maxlength="100" autocomplete="new-password"') +
-          `</div>`,
-        async (d) =>
-          (
-            await api("/api/auth/password", {
-              method: "PUT",
-              body: JSON.stringify(Object.fromEntries(d)),
-            })
-          ).message,
-      );
-    if (action === "content") return suaNoiDungDichVu(id);
-    if (["bold", "italic", "list"].includes(action)) {
-      document.querySelector("#rich-editor").focus();
-      document.execCommand(action === "list" ? "insertUnorderedList" : action);
-    }
-  }
-  document.addEventListener("click", async (e) => {
-    const target = e.target.closest("[data-action]");
-    if (!target || target.disabled) return;
-    try {
-      await xuLyThaoTac(target.dataset.action, target.dataset.id, target);
-    } catch (ex) {
-      if (dialog.open) error.textContent = ex.message;
-      else notice(ex.message);
-    }
-  });
-  function chuyenTrang() {
-    if (location.hash === "#vehicles") history.replaceState(history.state, "", "#customers");
-    const next = location.hash.slice(1) || "dashboard";
-    if (next !== section) {
-      page = 1;
-      q = "";
-      from = "";
-      to = "";
-      status = "";
-    }
-    section = next;
-    document.querySelector("#sidebar").classList.remove("open");
-    taiDuLieu();
-  }
-  window.addEventListener("hashchange", chuyenTrang);
-  document.querySelector("#today").textContent = new Intl.DateTimeFormat(
-    "vi-VN",
-    { dateStyle: "full" },
-  ).format(new Date());
-  api("/api/catalog/schema")
-    .then((data) => {
-      specs = data;
-      chuyenTrang();
-    })
-    .catch((e) => {
-      content.innerHTML = `<div class="error-box">${esc(e.message)} <a href="/Account/Login">Đăng nhập lại</a></div>`;
+    document.addEventListener("click", async (suKienNhap) => {
+        const phanTuDich = suKienNhap.target.closest("[data-action]");
+        if (!phanTuDich || phanTuDich.disabled) return;
+        try {
+            await xuLyThaoTac(phanTuDich.dataset.action, phanTuDich.dataset.id, phanTuDich);
+        } catch (loiXuLy) {
+            if (hopThoai.open) loi.textContent = loiXuLy.message;
+            else hienThongBao(loiXuLy.message);
+        }
     });
+    function chuyenTrang() {
+        if (location.hash === "#vehicles") history.replaceState(history.state, "", "#customers");
+        const mucTiepTheo = location.hash.slice(1) || "dashboard";
+        if (mucTiepTheo !== mucDangChon) {
+            trang = 1;
+            tuKhoa = "";
+            tuNgay = "";
+            denNgay = "";
+            trangThaiLoc = "";
+        }
+        mucDangChon = mucTiepTheo;
+        document.querySelector("#sidebar").classList.remove("open");
+        taiDuLieu();
+    }
+    window.addEventListener("hashchange", chuyenTrang);
+    document.querySelector("#today").textContent = new Intl.DateTimeFormat("vi-VN", {
+        dateStyle: "full",
+    }).format(new Date());
+    giaoTiep("/api/catalog/schema")
+        .then((duLieuTraVe) => {
+            cacCauHinhDanhMuc = duLieuTraVe;
+            chuyenTrang();
+        })
+        .catch((suKienNhap) => {
+            noiDungTrang.innerHTML = `<div class="error-box">${maHoaHtml(suKienNhap.message)} <a href="/Account/Login">Đăng nhập lại</a></div>`;
+        });
 })();
