@@ -49,7 +49,8 @@
         khiLuu,
         maLanTai = 0,
         boHenThongBao,
-        dangLuuHopThoai = false;
+        dangLuuHopThoai = false,
+        thoCuaPhieuDangXem = new Set();
     const cacTenMuc = {
         dashboard: "Tổng quan cửa hàng",
         bookings: "Lịch hẹn online",
@@ -61,22 +62,70 @@
         myAttendance: "Công cá nhân",
         profile: "Tài khoản cá nhân",
     };
-    const cacNhomNhanSu = [
-        { title: "Nhân viên & chức vụ", items: ["employees", "roles"] },
-        { title: "Ca làm & chấm công", items: ["attendance", "shifts", "myAttendance"] },
-        { title: "Thưởng / phạt", items: ["adjustments", "roleAdjustments"] },
+    const cacNhomMenu = [
+        { nhan: "VẬN HÀNH", title: "Tổng quan cửa hàng", icon: "◫", items: ["dashboard"] },
+        { nhan: "VẬN HÀNH", title: "Tiếp nhận & sửa chữa", icon: "▱", items: ["jobs", "bookings"] },
+        { nhan: "VẬN HÀNH", title: "Khách hàng & xe", icon: "◇", items: ["customers"] },
+        { nhan: "DANH MỤC", title: "Dịch vụ", icon: "✦", items: ["services", "serviceParts"] },
+        {
+            nhan: "DANH MỤC",
+            title: "Kho & nhà cung cấp",
+            icon: "▦",
+            items: ["parts", "purchases", "stockHistory", "suppliers"],
+        },
+        {
+            nhan: "DANH MỤC",
+            title: "Nhân sự",
+            icon: "♧",
+            items: ["employees", "roles", "shifts", "attendance", "adjustments", "roleAdjustments"],
+        },
+        { nhan: "TÀI CHÍNH", title: "Hóa đơn & doanh thu", icon: "▤", items: ["invoices", "reports"] },
+        { nhan: "TÀI CHÍNH", title: "Tài khoản của tôi", icon: "⚙", items: ["myAttendance", "profile"] },
     ];
-    const duocMoMuc = (maBanGhi) =>
-        cacTenMuc[maBanGhi] || cacCauHinhDanhMuc.some((phanTuXet) => phanTuXet.id === maBanGhi);
-    const layNhomNhanSu = () => cacNhomNhanSu.find((nhom) => nhom.items.includes(mucDangChon));
-    function hienMucNhanSu() {
-        const nhom = layNhomNhanSu();
-        if (!nhom) return "";
-        const cacLienKet = nhom.items.filter(duocMoMuc).map((maBanGhi) => {
-            const tieuDeNhap =
-                cacTenMuc[maBanGhi] ||
-                cacCauHinhDanhMuc.find((phanTuXet) => phanTuXet.id === maBanGhi)?.title;
-            return `<a class="personnel-tab ${maBanGhi === mucDangChon ? "active" : ""}" href="#${maBanGhi}"${maBanGhi === mucDangChon ? ' aria-current="page"' : ""}>${maHoaHtml(tieuDeNhap)}</a>`;
+    const cacTenTab = {
+        jobs: "Phiếu sửa chữa",
+        bookings: "Lịch hẹn online",
+        services: "Dịch vụ",
+        serviceParts: "Định mức phụ tùng",
+        parts: "Phụ tùng",
+        purchases: "Phiếu nhập",
+        stockHistory: "Lịch sử điều chỉnh",
+        suppliers: "Nhà cung cấp",
+        employees: "Nhân viên",
+        roles: "Chức vụ & hệ số lương",
+        shifts: "Ca làm",
+        attendance: "Chấm công",
+        adjustments: "Khoản thưởng / phạt",
+        roleAdjustments: "Khoản theo chức vụ",
+        invoices: "Hóa đơn",
+        reports: "Báo cáo doanh thu",
+        myAttendance: "Công của tôi",
+        profile: "Đổi mật khẩu",
+    };
+    const quyenTheoMuc = {
+        bookings: duocTiepNhan,
+        jobs: duocTiepNhan || laTho,
+        purchases: laQuanLy,
+        stockHistory: laQuanLy,
+        invoices: duocTiepNhan,
+        reports: laQuanLy,
+    };
+    const duocMoMuc = (maMuc) =>
+        quyenTheoMuc[maMuc] !== false &&
+        Boolean(cacTenMuc[maMuc] || cacCauHinhDanhMuc.some((phanTuXet) => phanTuXet.id === maMuc));
+    const layNhomDangChon = () => cacNhomMenu.find((nhom) => nhom.items.includes(mucDangChon));
+    const tenTab = (maMuc) =>
+        cacTenTab[maMuc] ||
+        cacTenMuc[maMuc] ||
+        cacCauHinhDanhMuc.find((phanTuXet) => phanTuXet.id === maMuc)?.title ||
+        maMuc;
+    function hienTabNhom() {
+        const nhom = layNhomDangChon();
+        const cacMuc = nhom ? nhom.items.filter(duocMoMuc) : [];
+        if (cacMuc.length < 2) return "";
+        const cacLienKet = cacMuc.map((maMuc) => {
+            const dangChon = maMuc === mucDangChon;
+            return `<a class="personnel-tab ${dangChon ? "active" : ""}" href="#${maMuc}"${dangChon ? ' aria-current="page"' : ""}>${maHoaHtml(tenTab(maMuc))}</a>`;
         });
         return `<nav class="personnel-tabs" aria-label="${maHoaHtml(nhom.title)}">${cacLienKet.join("")}</nav>`;
     }
@@ -98,18 +147,56 @@
         clearTimeout(boHenThongBao);
         boHenThongBao = setTimeout(() => (phanTu.hidden = true), 4500);
     };
-    const layLuaChon = async (loaiDanhMuc, giaTriNhap = "", khongBatBuoc = true) => {
-        const cacDong = await giaoTiep("/api/catalog/options/" + loaiDanhMuc);
-        return (
-            (khongBatBuoc ? '<option value="">Chọn…</option>' : "") +
-            cacDong
-                .map(
-                    (phanTuXet) =>
-                        `<option value="${maHoaHtml(phanTuXet.id)}" ${String(phanTuXet.id) === String(giaTriNhap) ? "selected" : ""}>${maHoaHtml(phanTuXet.label)} [${maHoaHtml(phanTuXet.id)}]</option>`,
-                )
-                .join("")
-        );
+    const kieuNutSua = "soft-blue small",
+        kieuNutXoa = "soft-red small",
+        kieuNutXem = "soft-green small";
+
+    const soXeConNhan = (tho) => Math.max(0, Number(tho.capacity) - Number(tho.busy));
+    const nhanThoPhuTrach = (tho) => {
+        const con = soXeConNhan(tho);
+        const tinhTrang = con > 0 ? `còn nhận ${con}/${tho.capacity} xe` : `đã đủ ${tho.capacity} xe`;
+        return `${tho.label} · ${tho.role} · ${tinhTrang}`;
     };
+    const nhanLuaChon = (loaiDanhMuc, dong) => {
+        if (loaiDanhMuc === "mechanics") return nhanThoPhuTrach(dong);
+        if (loaiDanhMuc === "parts") return `${dong.label} [${dong.id}]`;
+        return dong.label;
+    };
+    const layLuaChon = async (loaiDanhMuc, giaTriNhap = "", khongBatBuoc = true, thoDuocGiu = new Set()) => {
+        const cacDong = await giaoTiep("/api/catalog/options/" + loaiDanhMuc);
+        const cacLuaChon = cacDong.map((dong) => {
+            const daChon = String(dong.id) === String(giaTriNhap);
+            const daDuXe =
+                loaiDanhMuc === "mechanics" && soXeConNhan(dong) === 0 && !thoDuocGiu.has(String(dong.id));
+            return `<option value="${maHoaHtml(dong.id)}" ${daChon ? "selected" : ""} ${daDuXe && !daChon ? "disabled" : ""}>${maHoaHtml(nhanLuaChon(loaiDanhMuc, dong))}</option>`;
+        });
+        return (khongBatBuoc ? '<option value="">Chọn…</option>' : "") + cacLuaChon.join("");
+    };
+    async function layTenChoCotChon(cauHinhDanhMuc) {
+        const cacTruongChon = cauHinhDanhMuc.fields.filter((truong) => truong.type === "select" && truong.source);
+        const cacBang = await Promise.all(
+            cacTruongChon.map(async (truong) => {
+                try {
+                    const cacDong = await giaoTiep("/api/catalog/options/" + truong.source);
+                    const tenGon = (dong) => String(dong.label).replace(/ · tồn \d+$/, "");
+                    return [truong.name, new Map(cacDong.map((dong) => [String(dong.id), tenGon(dong)]))];
+                } catch {
+                    return [truong.name, new Map()];
+                }
+            }),
+        );
+        return Object.fromEntries(cacBang);
+    }
+
+    const hopThoaiLoi = document.querySelector("#alert-dialog");
+    function hienLoi(tieuDe, noiDung) {
+        document.querySelector("#alert-title").textContent = tieuDe;
+        document.querySelector("#alert-message").textContent = noiDung;
+        if (!hopThoaiLoi.open) hopThoaiLoi.showModal();
+        document.querySelector("#alert-close").focus();
+    }
+    document.querySelector("#alert-close").onclick = () => hopThoaiLoi.close();
+    const taoLoi = (tieuDe, noiDung) => Object.assign(new Error(noiDung), { tieuDe });
     const taoTruongNhap = (
         ten,
         nhanHienThi,
@@ -143,6 +230,7 @@
         if (!khiLuu || dangLuuHopThoai || !bieuMau.reportValidity()) return;
         loi.textContent = "";
         nutLuu.disabled = true;
+        nutLuu.setAttribute("aria-busy", "true");
         dangLuuHopThoai = true;
         const hamXuLyLuu = khiLuu;
         try {
@@ -151,10 +239,11 @@
             hopThoai.close();
             hienThongBao(thongBao || "Đã lưu thông tin.");
             await taiDuLieu();
-        } catch (suKienNhap) {
-            loi.textContent = suKienNhap.message;
+        } catch (loiLuu) {
+            hienLoi(loiLuu.tieuDe || "Không thể lưu", loiLuu.message);
         } finally {
             nutLuu.disabled = false;
+            nutLuu.removeAttribute("aria-busy");
             dangLuuHopThoai = false;
         }
     });
@@ -169,59 +258,21 @@
         }
     };
     function hienMenu() {
-        const cacNhom = [
-            [
-                "TỔNG QUAN",
-                [
-                    ["dashboard", "◫"],
-                    ...(duocTiepNhan ? [["bookings", "◷"]] : []),
-                    ...(duocTiepNhan || laTho ? [["jobs", "▱"]] : []),
-                ],
-            ],
-            [
-                "KHÁCH HÀNG & DỊCH VỤ",
-                ["customers", "services", "serviceParts"].map((phanTuXet) => [phanTuXet, "◇"]),
-            ],
-            [
-                "KHO & NHÀ CUNG CẤP",
-                ["parts", "suppliers", ...(laQuanLy ? ["purchases", "stockHistory"] : [])].map(
-                    (phanTuXet) => [phanTuXet, "▦"],
-                ),
-            ],
-            ["NHÂN SỰ", cacNhomNhanSu.map((nhom) => [nhom.items.find(duocMoMuc), "♧"])],
-            [
-                "TÀI CHÍNH",
-                [
-                    ...(duocTiepNhan ? [["invoices", "▤"]] : []),
-                    ...(laQuanLy ? [["reports", "◴"]] : []),
-                    ["profile", "⚙"],
-                ],
-            ],
-        ];
-        document.querySelector("#navigation").innerHTML = cacNhom
-            .map(([nhanHienThi, cacMucDuLieu]) => {
-                cacMucDuLieu = cacMucDuLieu.filter(
-                    ([maBanGhi]) =>
-                        cacTenMuc[maBanGhi] ||
-                        cacCauHinhDanhMuc.some((phanTuXet) => phanTuXet.id === maBanGhi),
-                );
-                if (!cacMucDuLieu.length) return "";
-
-                const cacMuc = cacMucDuLieu.map(([maBanGhi, bieuTuong]) => {
-                    const nhom = cacNhomNhanSu.find((nhom) => nhom.items.includes(maBanGhi));
-                    const tenMuc =
-                        nhom?.title ||
-                        cacTenMuc[maBanGhi] ||
-                        cacCauHinhDanhMuc.find((phanTuXet) => phanTuXet.id === maBanGhi)?.title;
-                    const dangChon = nhom
-                        ? nhom.items.includes(mucDangChon)
-                        : maBanGhi === mucDangChon;
-                    return `<a class="nav-item ${dangChon ? "active" : ""}" href="#${maBanGhi}"${dangChon ? ' aria-current="page"' : ""}><i>${bieuTuong}</i>${maHoaHtml(tenMuc)}</a>`;
-                });
-
-                return `<div class="nav-label">${nhanHienThi}</div>` + cacMuc.join("");
-            })
-            .join("");
+        let nhanTruoc = "";
+        const cacDong = [];
+        for (const nhom of cacNhomMenu) {
+            const cacMuc = nhom.items.filter(duocMoMuc);
+            if (!cacMuc.length) continue;
+            if (nhom.nhan !== nhanTruoc) {
+                cacDong.push(`<div class="nav-label">${nhom.nhan}</div>`);
+                nhanTruoc = nhom.nhan;
+            }
+            const dangChon = nhom.items.includes(mucDangChon);
+            cacDong.push(
+                `<a class="nav-item ${dangChon ? "active" : ""}" href="#${cacMuc[0]}"${dangChon ? ' aria-current="page"' : ""}><i>${nhom.icon}</i>${maHoaHtml(nhom.title)}</a>`,
+            );
+        }
+        document.querySelector("#navigation").innerHTML = cacDong.join("");
     }
     function taoBoLoc({
         dates: locTheoNgay = false,
@@ -311,12 +362,9 @@
     async function taiDuLieu() {
         const lanTai = ++maLanTai;
         document.querySelector("#page-title").textContent =
-            layNhomNhanSu()?.title ||
-            cacTenMuc[mucDangChon] ||
-            cacCauHinhDanhMuc.find((phanTuXet) => phanTuXet.id === mucDangChon)?.title ||
-            "Quản lý";
+            layNhomDangChon()?.title || tenTab(mucDangChon) || "Quản lý";
         hienMenu();
-        const dieuHuongNhanSu = hienMucNhanSu();
+        const dieuHuongNhanSu = hienTabNhom();
         noiDungTrang.innerHTML = dieuHuongNhanSu + '<div class="empty">Đang đọc dữ liệu…</div>';
         try {
             let noiDungHtml = "";
@@ -375,18 +423,21 @@
                                   ],
                                   duLieu.items,
                                   (_, chiSo) =>
-                                      taoNut("Xem xe", "customer-vehicles", chiSo) +
-                                      taoNut("Sửa", "edit", chiSo),
+                                      taoNut("Xem xe", "customer-vehicles", chiSo, kieuNutXem) +
+                                      taoNut("Sửa", "edit", chiSo, kieuNutSua),
                               )
                             : '<div class="empty">Không tìm thấy khách hàng phù hợp.</div>');
                 } else if (cauHinhDanhMuc) {
+                    const cacTenTheoMa = await layTenChoCotChon(cauHinhDanhMuc);
                     const cacCot = cauHinhDanhMuc.fields
                         .filter((truongNhap) => truongNhap.type !== "password")
                         .map((truongNhap) => [
                             truongNhap.name,
                             truongNhap.label,
                             (giaTriTruong) =>
-                                truongNhap.type === "bool"
+                                cacTenTheoMa[truongNhap.name]?.has(String(giaTriTruong))
+                                    ? maHoaHtml(cacTenTheoMa[truongNhap.name].get(String(giaTriTruong)))
+                                    : truongNhap.type === "bool"
                                     ? taoNhanTrangThai(
                                           giaTriTruong ? "Đang hoạt động" : "Ngừng hoạt động",
                                       )
@@ -411,12 +462,12 @@
                                     !truongNhap.readOnly &&
                                     !cauHinhDanhMuc.keys.includes(truongNhap.name),
                             );
-                            const nutSua = coTheSua ? taoNut("Sửa", "edit", chiSo) : "";
+                            const nutSua = coTheSua ? taoNut("Sửa", "edit", chiSo, kieuNutSua) : "";
                             const nutNoiDung =
                                 mucDangChon === "services"
-                                    ? taoNut("Ảnh & nội dung", "content", banGhi.MaDichVu)
+                                    ? taoNut("Ảnh & nội dung", "content", banGhi.MaDichVu, kieuNutXem)
                                     : "";
-                            return nutSua + nutNoiDung + taoNut("Xóa", "delete", chiSo);
+                            return nutSua + nutNoiDung + taoNut("Xóa", "delete", chiSo, kieuNutXoa);
                         });
                 }
                 if (mucDangChon === "jobs")
@@ -448,7 +499,7 @@
                                 ],
                             ],
                             duLieu.items,
-                            (banGhi) => taoNut("Chi tiết", "job", banGhi.id),
+                            (banGhi) => taoNut("Chi tiết", "job", banGhi.id, kieuNutXem),
                         );
                 if (mucDangChon === "bookings")
                     noiDungHtml =
@@ -476,10 +527,10 @@
                             duLieu.items,
                             (banGhi) =>
                                 banGhi.status === "Chờ xác nhận"
-                                    ? taoNut("Tiếp nhận", "accept", banGhi.id) +
-                                      taoNut("Hủy", "reject", banGhi.id)
+                                    ? taoNut("Tiếp nhận", "accept", banGhi.id, kieuNutXem) +
+                                      taoNut("Hủy", "reject", banGhi.id, kieuNutXoa)
                                     : banGhi.jobId
-                                      ? taoNut("Xem phiếu", "job", banGhi.jobId)
+                                      ? taoNut("Xem phiếu", "job", banGhi.jobId, kieuNutXem)
                                       : "",
                         );
                 if (mucDangChon === "purchases")
@@ -494,7 +545,7 @@
                                 ["amount", "Tổng nhập", dinhDangTien],
                             ],
                             duLieu.items,
-                            (banGhi) => taoNut("Chi tiết", "purchase-detail", banGhi.id),
+                            (banGhi) => taoNut("Chi tiết", "purchase-detail", banGhi.id, kieuNutXem),
                         );
                 if (mucDangChon === "stockHistory")
                     noiDungHtml =
@@ -527,7 +578,7 @@
                                 ["amount", "Thành tiền", dinhDangTien],
                             ],
                             duLieu.items,
-                            (banGhi) => taoNut("Xem / In", "print-invoice", banGhi.jobId),
+                            (banGhi) => taoNut("Xem / In", "print-invoice", banGhi.jobId, kieuNutXem),
                         );
                 noiDungHtml = `<section class="panel">${noiDungHtml}${taoPhanTrang(duLieu)}</section>`;
             }
@@ -828,65 +879,45 @@
             },
         );
     }
-    const giaoDienXemTruocPhieu = `<div class="detail-actions"><button class="button secondary" type="button" id="job-preview-button">Kiểm tra tiền và phụ tùng</button></div>
-    <div id="job-preview" aria-live="polite"></div>`;
-    const dongDichVuHopLe = (dongChiTiet) =>
-        dongChiTiet.serviceId &&
-        Number.isInteger(dongChiTiet.quantity) &&
-        dongChiTiet.quantity >= 1 &&
-        dongChiTiet.quantity <= 1000;
+    const tieuDeLoiTiepNhan = "Không thể tiếp nhận";
+    const thongBaoPhuTung = {
+        "Thiếu tồn": "Không đủ phụ tùng.",
+        "Hết hạn": "Phụ tùng đã hết hạn sử dụng.",
+        "Ngừng sử dụng": "Phụ tùng đã ngừng sử dụng.",
+    };
 
-    function ganXemTruocPhieu(layDuLieu) {
-        const nut = noiDungHopThoai.querySelector("#job-preview-button");
-        const vungKetQua = noiDungHopThoai.querySelector("#job-preview");
-        nut.addEventListener("click", async () => {
-            const duLieuNhap = layDuLieu();
-            const duDuLieu =
-                duLieuNhap.vehicleType &&
-                duLieuNhap.services.length &&
-                duLieuNhap.services.every(dongDichVuHopLe);
-            if (!duDuLieu) {
-                vungKetQua.textContent =
-                    "Nhập mẫu xe, chọn dịch vụ và số lượng hợp lệ để kiểm tra.";
-                return;
-            }
-            const guiYeuCau = JSON.stringify(duLieuNhap);
-            const conHienTai = () =>
-                nut.isConnected && hopThoai.open && guiYeuCau === JSON.stringify(layDuLieu());
-            nut.disabled = true;
-            vungKetQua.textContent = "Đang kiểm tra…";
-            try {
-                const ketQua = await giaoTiep("/api/workshop/jobs/preview", {
-                    method: "POST",
-                    body: guiYeuCau,
-                });
-                if (!conHienTai()) return;
-                const cacPhuTung = ketQua.parts.map((phuTung) => ({
-                    ...phuTung,
-                    issue: phuTung.issue || "Đủ",
-                }));
-                vungKetQua.innerHTML = `<div class="invoice-total">Tạm tính <b>${dinhDangTien(ketQua.total)}</b></div>${
-                    cacPhuTung.length
-                        ? taoBang(
-                              [
-                                  ["id", "Mã phụ tùng"],
-                                  ["name", "Phụ tùng"],
-                                  ["quantity", "Cần dùng"],
-                                  ["stock", "Tồn kho"],
-                                  ["issue", "Kiểm tra"],
-                              ],
-                              cacPhuTung,
-                          )
-                        : '<p class="hint">Các dịch vụ đã chọn không có định mức phụ tùng.</p>'
-                }
-          <p class="hint">Kho và giá được kiểm tra lại khi lưu phiếu.</p>`;
-            } catch (suKienNhap) {
-                if (conHienTai()) vungKetQua.textContent = suKienNhap.message;
-            } finally {
-                nut.disabled = false;
-            }
-        });
-        return () => vungKetQua.replaceChildren();
+    async function kiemTraTruocKhiTiepNhan(mauXe, cacDichVu, maTho) {
+        let ketQua;
+        try {
+            ketQua = await giaoTiep("/api/workshop/jobs/preview", {
+                method: "POST",
+                body: JSON.stringify({ vehicleType: mauXe, services: cacDichVu }),
+            });
+        } catch (loiKiemTra) {
+            throw taoLoi(tieuDeLoiTiepNhan, loiKiemTra.message);
+        }
+
+        const cacVanDe = new Set(
+            ketQua.parts
+                .filter((phuTung) => phuTung.issue)
+                .map((phuTung) => thongBaoPhuTung[phuTung.issue] || "Phụ tùng không dùng được."),
+        );
+
+        if (maTho) {
+            const cacTho = await giaoTiep("/api/catalog/options/mechanics");
+            const tho = cacTho.find((dong) => String(dong.id) === String(maTho));
+            if (tho && soXeConNhan(tho) === 0) cacVanDe.add("Thợ đã nhận đủ xe.");
+        }
+
+        if (cacVanDe.size) throw taoLoi(tieuDeLoiTiepNhan, [...cacVanDe].join("\n"));
+    }
+
+    async function guiTiepNhan(hamGui) {
+        try {
+            return await hamGui();
+        } catch (loiGui) {
+            throw taoLoi(tieuDeLoiTiepNhan, loiGui.message);
+        }
     }
 
     async function tiepNhanXe() {
@@ -942,7 +973,7 @@
             `<div class="form-grid">${cacTruong}</div>`,
             `<h3 style="margin-top:24px">Dịch vụ thực hiện</h3>`,
             `<div id="job-services"><div class="line-items" id="lines"></div>${taoNut("+ Thêm dịch vụ", "line-add")}</div>`,
-            giaoDienXemTruocPhieu,
+            `<p class="hint">Khi bấm Tiếp nhận, hệ thống kiểm tra dịch vụ, tồn kho phụ tùng và số xe của thợ rồi mới trừ kho.</p>`,
         ].join("");
 
         moHopThoai(
@@ -952,24 +983,22 @@
                 const duLieuNhap = Object.fromEntries(duLieu);
                 Object.assign(duLieuNhap, layDuLieu());
                 delete duLieuNhap.line;
-                const banGhi = await giaoTiep("/api/workshop/jobs", {
-                    method: "POST",
-                    body: JSON.stringify(duLieuNhap),
-                });
+                if (!duLieuNhap.services.length)
+                    throw taoLoi(tieuDeLoiTiepNhan, "Hãy chọn ít nhất một dịch vụ.");
+
+                await kiemTraTruocKhiTiepNhan(duLieuNhap.vehicleType, duLieuNhap.services, duLieuNhap.mechanicId);
+                const banGhi = await guiTiepNhan(() =>
+                    giaoTiep("/api/workshop/jobs", {
+                        method: "POST",
+                        body: JSON.stringify(duLieuNhap),
+                    }),
+                );
                 return banGhi.message + " Mã " + banGhi.id;
             },
-            "Tiếp nhận và trừ kho",
+            "Tiếp nhận",
         );
         noiDungHopThoai.dataset.lineOptions = cacLuaChonDichVu;
         themDong();
-        const xoaXemTruoc = ganXemTruocPhieu(layDuLieu);
-        bieuMau.elements.vehicleType.addEventListener("input", xoaXemTruoc);
-        const cacTruongDichVu = noiDungHopThoai.querySelector("#job-services");
-        cacTruongDichVu.addEventListener("input", xoaXemTruoc);
-        cacTruongDichVu.addEventListener("click", (suKienNhap) => {
-            if (suKienNhap.target.closest('[data-action="line-add"], [data-action="line-remove"]'))
-                xoaXemTruoc();
-        });
     }
     function themDong() {
         const danhSachDong = document.querySelector("#lines");
@@ -1121,12 +1150,18 @@
             moHopThoai("Hóa đơn · " + (duLieu.invoice?.id || chiSoPhu.id), noiDungHtml);
             return;
         }
+        thoCuaPhieuDangXem = new Set(duLieu.assignments.map((phanCong) => String(phanCong.employeeId)));
         const ngayGio = (giaTriTruong) =>
             `${dinhDangNgay(giaTriTruong)} ${maHoaHtml(String(giaTriTruong).slice(11, 16))}`;
         const nutBoPhanCong =
             duocTiepNhan && chiSoPhu.status === "Chờ sửa"
                 ? (banGhi) =>
-                      taoNut("Bỏ phân công", "unassign", chiSoPhu.id + "~" + banGhi.employeeId)
+                      taoNut(
+                          "Bỏ phân công",
+                          "unassign",
+                          chiSoPhu.id + "~" + banGhi.employeeId,
+                          kieuNutXoa,
+                      )
                 : null;
         const bangPhanCong = taoBang(
             [
@@ -1183,25 +1218,28 @@
             `<p>Xe <b>${maHoaHtml(booking.brand)} ${maHoaHtml(booking.vehicleType)}</b> · ${maHoaHtml(booking.licensePlate)}</p>`,
             `<p>Dịch vụ <b>${maHoaHtml(booking.service)}</b></p>`,
             `<div class="form-grid">${cacTruong}</div>`,
-            giaoDienXemTruocPhieu,
         ].join("");
 
         moHopThoai(
             "Tiếp nhận lịch " + maBanGhi,
             noiDungForm,
-            async (duLieu) =>
-                (
-                    await giaoTiep(
-                        "/api/workshop/bookings/" + encodeURIComponent(maBanGhi) + "/accept",
-                        { method: "POST", body: JSON.stringify(Object.fromEntries(duLieu)) },
-                    )
-                ).message,
-            "Tiếp nhận và trừ kho",
+            async (duLieu) => {
+                const duLieuNhap = Object.fromEntries(duLieu);
+                await kiemTraTruocKhiTiepNhan(
+                    booking.vehicleType,
+                    [{ serviceId: booking.serviceId, quantity: 1 }],
+                    duLieuNhap.mechanicId,
+                );
+                const ketQua = await guiTiepNhan(() =>
+                    giaoTiep("/api/workshop/bookings/" + encodeURIComponent(maBanGhi) + "/accept", {
+                        method: "POST",
+                        body: JSON.stringify(duLieuNhap),
+                    }),
+                );
+                return ketQua.message;
+            },
+            "Tiếp nhận",
         );
-        ganXemTruocPhieu(() => ({
-            vehicleType: booking.vehicleType,
-            services: [{ serviceId: booking.serviceId, quantity: 1 }],
-        }));
     }
     function xacNhan(tieuDeNhap, noiDung, hamXuLy) {
         moHopThoai(
@@ -1321,18 +1359,16 @@
             return xemXeCuaKhach(cacDongHienTai[Number(maBanGhi)], phanTuDich);
         if (thaoTac === "edit") return suaDanhMuc(Number(maBanGhi));
         if (thaoTac === "delete") {
-            const cauHinhDanhMuc = cacCauHinhDanhMuc.find(
-                    (giaTriTrangThai) => giaTriTrangThai.id === mucDangChon,
-                ),
+            const cauHinhDanhMuc = cacCauHinhDanhMuc.find((cauHinh) => cauHinh.id === mucDangChon),
                 dongDuLieu = cacDongHienTai[Number(maBanGhi)],
-                maBanGhi = layKhoa(cauHinhDanhMuc, dongDuLieu);
+                maCanXoa = layKhoa(cauHinhDanhMuc, dongDuLieu);
             return xacNhan(
                 "Xóa bản ghi",
                 "Xóa " +
-                    maBanGhi +
+                    maCanXoa +
                     "? Bản ghi đã được dùng trong nghiệp vụ sẽ được bảo vệ bởi liên kết dữ liệu.",
                 () =>
-                    giaoTiep("/api/catalog/" + mucDangChon + "/" + encodeURIComponent(maBanGhi), {
+                    giaoTiep("/api/catalog/" + mucDangChon + "/" + encodeURIComponent(maCanXoa), {
                         method: "DELETE",
                     }),
             );
@@ -1365,9 +1401,9 @@
             );
         }
         if (thaoTac === "assign") {
-            const cacLuaChon = await layLuaChon("mechanics");
+            const cacLuaChon = await layLuaChon("mechanics", "", true, thoCuaPhieuDangXem);
             const cacTruong = [
-                taoTruongChon("employeeId", "Thợ phụ trách", cacLuaChon),
+                taoTruongChon("employeeId", "Thợ phụ trách (số xe còn nhận được)", cacLuaChon),
                 taoTruongNhap(
                     "start",
                     "Bắt đầu",
@@ -1386,7 +1422,7 @@
             return moHopThoai(
                 "Phân công thợ",
                 `<div class="form-grid">${cacTruong}</div>` +
-                    `<p class="hint">Thợ chính tối đa 3 xe đang xử lý, thợ phụ tối đa 2 xe. Chọn lại cùng thợ để cập nhật thời gian.</p>`,
+                    `<p class="hint">Thợ chính nhận tối đa 3 xe, thợ phụ tối đa 2 xe (tính các xe đang chờ sửa/đang sửa). Thợ đã đủ xe sẽ bị khóa; chọn lại thợ đang làm xe này để đổi giờ.</p>`,
                 async (duLieu) =>
                     (
                         await giaoTiep("/api/workshop/jobs/" + maBanGhi + "/assign", {
@@ -1493,7 +1529,7 @@
         try {
             await xuLyThaoTac(phanTuDich.dataset.action, phanTuDich.dataset.id, phanTuDich);
         } catch (loiXuLy) {
-            if (hopThoai.open) loi.textContent = loiXuLy.message;
+            if (hopThoai.open) hienLoi(loiXuLy.tieuDe || "Có lỗi xảy ra", loiXuLy.message);
             else hienThongBao(loiXuLy.message);
         }
     });

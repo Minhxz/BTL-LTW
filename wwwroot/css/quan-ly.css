@@ -39,8 +39,11 @@ a {
     text-decoration: none;
 }
 button:disabled {
-    cursor: wait;
-    opacity: 0.55;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+button[aria-busy="true"] {
+    cursor: progress;
 }
 button:focus-visible,
 a:focus-visible {
@@ -253,16 +256,27 @@ h3 {
     gap: 6px;
     white-space: nowrap;
     border: 1px solid transparent;
-    border-radius: 7px;
-    padding: 10px 15px;
+    border-radius: 8px;
+    height: 36px;
+    min-width: 88px;
+    padding: 0 16px;
     font-size: 12px;
     font-weight: 600;
+    line-height: 1;
+    transition:
+        background-color 0.15s,
+        border-color 0.15s,
+        color 0.15s,
+        box-shadow 0.15s;
+}
+.button:not(:disabled):hover {
+    box-shadow: 0 2px 8px #17333f14;
 }
 .primary {
     background: var(--green);
     color: white;
 }
-.primary:hover {
+.primary:not(:disabled):hover {
     background: #0e654d;
     color: white;
 }
@@ -271,14 +285,48 @@ h3 {
     border-color: var(--line);
     color: var(--ink);
 }
+.secondary:not(:disabled):hover {
+    border-color: #b9cbd0;
+    background: #f7fafb;
+}
 .danger {
     color: #ab3a35;
     background: #fff3f1;
     border-color: #f7d3cf;
 }
+.danger:not(:disabled):hover {
+    background: #ffe4df;
+}
 .small {
-    padding: 6px 9px;
-    font-size: 11px;
+    min-width: 76px;
+    padding: 0 12px;
+}
+.soft-blue {
+    background: #eaf3ff;
+    border-color: #cfe2fb;
+    color: #2a6aa8;
+}
+.soft-blue:not(:disabled):hover {
+    background: #d9eaff;
+    border-color: #9cc4f0;
+}
+.soft-red {
+    background: #fff1ee;
+    border-color: #f6d0c9;
+    color: #b0412f;
+}
+.soft-red:not(:disabled):hover {
+    background: #ffe2dc;
+    border-color: #ec9f91;
+}
+.soft-green {
+    background: #eaf7ef;
+    border-color: #c9e9d6;
+    color: #1d7a55;
+}
+.soft-green:not(:disabled):hover {
+    background: #d9f1e3;
+    border-color: #92d0ae;
 }
 .stats {
     display: grid;
@@ -379,6 +427,7 @@ h3 {
 .toolbar select {
     width: auto;
     max-width: 220px;
+    height: 36px;
 }
 .toolbar input[type="date"] {
     max-width: 150px;
@@ -419,17 +468,9 @@ tr:last-child td {
 }
 .row-actions {
     display: flex;
-    gap: 5px;
+    gap: 6px;
     flex-wrap: wrap;
     min-width: 90px;
-}
-.row-actions button {
-    border: 1px solid var(--line);
-    background: white;
-    border-radius: 5px;
-    color: #40616a;
-    font-size: 11px;
-    padding: 5px 8px;
 }
 .badge {
     display: inline-block;
@@ -504,12 +545,23 @@ tr:last-child td {
     margin: 0;
 }
 .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
     border: 0;
     background: #f0f4f5;
     border-radius: 50%;
-    height: 30px;
-    width: 30px;
+    height: 32px;
+    width: 32px;
+    padding: 0;
     font-size: 20px;
+    line-height: 1;
+    color: #40616a;
+    transition: background-color 0.15s;
+}
+.icon-button:hover {
+    background: #e2eaec;
 }
 .form-grid {
     display: grid;
@@ -580,16 +632,55 @@ input[readonly] {
 }
 .line-row {
     display: grid;
-    grid-template-columns: 1fr 90px 30px;
+    grid-template-columns: 1fr 90px 36px;
     gap: 8px;
     align-items: center;
 }
 .line-row button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: 0;
     background: #fff0ed;
     color: #a84637;
-    border-radius: 4px;
-    height: 32px;
+    border-radius: 8px;
+    height: 36px;
+    width: 36px;
+    padding: 0;
+    font-size: 18px;
+    line-height: 1;
+}
+.line-row button:hover {
+    background: #ffe0d9;
+}
+.alert-dialog {
+    width: min(440px, 92vw);
+    text-align: center;
+}
+.alert-dialog h2 {
+    margin: 12px 0 8px;
+    font-size: 18px;
+}
+.alert-dialog p {
+    color: #5b6e77;
+    line-height: 1.6;
+    white-space: pre-line;
+    margin: 0;
+}
+.alert-dialog .dialog-actions {
+    justify-content: center;
+}
+.alert-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #fff1ee;
+    color: #b0412f;
+    font-size: 24px;
+    font-weight: 800;
 }
 .detail-grid {
     display: grid;

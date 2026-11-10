@@ -82,6 +82,14 @@
                 </div>
             </form>
         </dialog>
+        <dialog id="alert-dialog" class="ws-dialog alert-dialog" aria-labelledby="alert-title">
+            <div class="alert-icon" aria-hidden="true">!</div>
+            <h2 id="alert-title">Không thể lưu</h2>
+            <p id="alert-message"></p>
+            <div class="dialog-actions">
+                <button type="button" class="button primary" id="alert-close">Đã hiểu</button>
+            </div>
+        </dialog>
         <partial name="_GoiYXeMay" />
         <div class="toast" id="toast" role="status" hidden></div>
         <script src="~/js/goi-api.js" asp-append-version="true"></script>

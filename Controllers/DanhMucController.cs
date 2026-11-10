@@ -149,8 +149,12 @@ public sealed class DanhMucController(XuLyDuLieu duLieu, IDataProtectionProvider
             "employees" when laQuanLy =>
                 "Select MaNhanVien As id, HoTen As label From NhanVien Where TrangThai = 1 Order By HoTen",
             "mechanics" =>
-                "Select n.MaNhanVien As id, n.HoTen As label From NhanVien n Join ChucVu c On c.MaChucVu = n.MaChucVu "
-                    + "Where n.TrangThai = 1 And c.TenChucVu Like N'Thợ%' Order By n.HoTen",
+                "Select n.MaNhanVien As id, n.HoTen As label, c.TenChucVu As role, "
+                    + "Case When c.TenChucVu Like N'%chính%' Then 3 Else 2 End As capacity, "
+                    + "(Select Count(Distinct a.MaXe) From ChiTietPhanCong a Join PhieuTiepNhan p On p.MaXe = a.MaXe "
+                    + "Where a.MaNhanVien = n.MaNhanVien And p.TrangThai In " + TrangThaiDangXuLy + ") As busy "
+                    + "From NhanVien n Join ChucVu c On c.MaChucVu = n.MaChucVu "
+                    + "Where n.TrangThai = 1 And c.TenChucVu Like N'Thợ%' Order By c.TenChucVu, n.HoTen",
             "roles" when laQuanLy =>
                 "Select MaChucVu As id, TenChucVu As label From ChucVu Order By MaChucVu",
             "adjustments" when laQuanLy =>
